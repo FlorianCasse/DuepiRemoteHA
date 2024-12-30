@@ -1,3 +1,5 @@
+Note : Readme is a workinprogess.
+
 # DuepiRemoteHA
 Use a Duepi stove with HA and dpremoteiot.com
 
@@ -10,10 +12,10 @@ Use a Duepi stove with HA and dpremoteiot.com
 ## Get prerequisites
 
 You need to have an account on dpremoteiot.com and created you stove :
-![alt text](AccountAndDeviceID.png)
+![alt text](screenshots/AccountAndDeviceID.png)
 
 Use developper tool to get the session ID.
-![alt text](getSessionID.png)
+![alt text](screenshots/getSessionID.png)
 
 ## Edit stoveOnOff.py
 Add your personnal info in line 19 and 24 
@@ -27,7 +29,7 @@ Upload your python script in /config/scripts
 Add the switch and thermostat in your configuration.yaml
 
 Example:
-![alt text](configurationExample.png)
+![alt text](screenshots/configurationExample.png)
 
 
 
