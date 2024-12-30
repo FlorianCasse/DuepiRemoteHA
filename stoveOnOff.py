@@ -21,7 +21,7 @@ def control_stove(command):
 
     # Data common to both commands
     data = {
-        'deviceId': '66c5b3de5762492bc642e320',
+        'deviceId': 'ToBeReplace',
         'emailNotifications': '0',
         'settedPower': '1',
         'settedTemperature': '23',
