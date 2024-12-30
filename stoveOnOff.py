@@ -21,10 +21,10 @@ def control_stove(command):
 
     # Data common to both commands
     data = {
-        'deviceId': 'ToBeReplace',
-        'emailNotifications': '0',
-        'settedPower': '1',
-        'settedTemperature': '23',
+        'deviceId': 'ToBeReplace', # Replace with your actual device ID
+        'emailNotifications': '0', # Disable email notifications
+        'settedPower': '1', #Set the power to 1
+        'settedTemperature': '23', # Set the temperature to 23 degrees
         # 'active': '1' or '0' will be set based on the command
     }
 
