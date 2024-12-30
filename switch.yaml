@@ -1,0 +1,7 @@
+command_line: 
+  - switch:
+      name: StoveOnOff
+      command_on: "python3 /config/scripts/stoveOnOff.py On"
+      command_off: "python3 /config/scripts/stoveOnOff.py Off"
+      command_state: "python3 /config/scripts/stoveStatus.py"
+      value_template: "{{ value != 'Stove Off' }}"
