@@ -1,35 +1,61 @@
-Note : Readme is a workinprogess.
-
 # DuepiRemoteHA
-Use a Duepi stove with HA and dpremoteiot.com
+
+Use a Duepi stove with Home Assistant (HA) and dpremoteiot.com.
 
 ## Prerequisites
 
-- Having a Duepi Remote Wifi module to be able to connecte your stove to dpremoteiot.com
+- A Duepi Remote Wifi module to connect your stove to dpremoteiot.com.
+- An account on dpremoteiot.com with your stove created.
 
-# How to
+![Account and Device ID](screenshots/AccountAndDeviceID.png)
 
-## Get prerequisites
+## How to Get Started
 
-You need to have an account on dpremoteiot.com and created you stove :
-![alt text](screenshots/AccountAndDeviceID.png)
+### Get Session ID
 
-Use developper tool to get the session ID.
-![alt text](screenshots/getSessionID.png)
+Use developer tools in your browser to get the session ID.
+![Get Session ID](screenshots/getSessionID.png)
 
-## Edit stoveOnOff.py
-Add your personnal info in line 19 and 24 
+### Edit `stoveOnOff.py`
 
-## Upload Python script
+Add your personal information in the following lines:
+- Line 19: Replace `'ToBeReplace'` with your actual device ID.
+- Line 24: Replace `'ToBeReplace'` with your actual session cookie.
 
-Upload your python script in /config/scripts
+### Upload Python Script
 
-## Edit your configuration.yaml
+Upload your Python script to `/config/scripts`.
 
-Add the switch and thermostat in your configuration.yaml
+### Edit Your `configuration.yaml`
+
+Add the switch and thermostat configurations to your `configuration.yaml` file.
 
 Example:
-![alt text](screenshots/configurationExample.png)
+```yaml
+# switch.yaml
+command_line: 
+  - switch:
+      name: StoveOnOff
+      command_on: "python3 /config/scripts/stoveOnOff.py On"
+      command_off: "python3 /config/scripts/stoveOnOff.py Off"
+      command_state: "python3 /config/scripts/stoveStatus.py" # Not used
+      value_template: "{{ value != 'Stove Off' }}"
+
+# thermostat.yaml
+climate:
+  - platform: generic_thermostat
+    name: Poele pellets # Name of the thermostat
+    heater: switch.stoveonoff # Nodon pilot wire module
+    target_sensor: sensor.temperaturesalonsonoff_temperature # Temperature sensor
+    min_temp: 15 # Minimum temperature of the thermostat
+    max_temp: 25 # Maximum temperature of the thermostat
+    target_temp: 22 # Default target temperature
+    cold_tolerance: 1.5
+    hot_tolerance: 0.5
+    min_cycle_duration:
+      seconds: 60
+    initial_hvac_mode: "heat"
+    precision: 0.5
 
 
 
