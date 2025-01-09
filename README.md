@@ -5,6 +5,8 @@ Use a Duepi stove with Home Assistant (HA) and dpremoteiot.com.
 ## Prerequisites
 
 - A Duepi Remote Wifi module to connect your stove to dpremoteiot.com.
+    Ex : https://www.poelediscount.com/modules-wifi-et-thermostats-connectes/3320-module-wifi-duepi-interstoves.html
+        https://www.lafrancaisedupoele.fr/accueil/481-module-wi-fi-duepi.html
 - An account on dpremoteiot.com with your stove created.
 
 ![Account and Device ID](screenshots/AccountAndDeviceID.png)
