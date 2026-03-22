@@ -117,20 +117,123 @@ All entities are grouped under a single **Duepi Pellet Stove** device:
 
 ## Migration from Script-Based Setup
 
-If you were using the previous `stoveOnOff.py` + `command_line` setup:
+If you were using the previous `stoveOnOff.py` + `command_line` setup, an interactive migration script is provided to guide you through the process.
 
-1. Install the custom integration (see above).
-2. Add it via the UI with your dpremoteiot.com email and password.
-3. Remove from your `configuration.yaml`:
-   - The `command_line` switch and sensor entries
+### Migration script
+
+The script can run **locally on your HA instance** or **remotely from your computer via SSH**.
+
+#### Local execution
+
+If you have direct access to the HA terminal (SSH add-on, console, etc.):
+
+```bash
+python3 /config/scripts/migrate.py
+```
+
+#### Remote execution via SSH
+
+Run the script from your computer — it connects to HA via SSH and performs all operations remotely:
+
+```bash
+# Basic usage (default SSH port 22):
+python3 migrate.py --ssh root@homeassistant
+
+# With a custom SSH port (e.g. Home Assistant OS uses port 22222):
+python3 migrate.py --ssh root@192.168.1.100 --port 22222
+
+# With a specific SSH key:
+python3 migrate.py --ssh root@homeassistant --key ~/.ssh/ha_key
+
+# Non-interactive mode (auto-confirm backup/removal, useful for scripting):
+python3 migrate.py --ssh root@homeassistant --no-interactive
+
+# Custom HA config directory (default is /config):
+python3 migrate.py --ssh root@homeassistant --config /home/homeassistant/.homeassistant
+```
+
+#### Script options
+
+| Option | Default | Description |
+|---|---|---|
+| `--ssh USER@HOST` | *(local)* | SSH destination for remote execution |
+| `--port PORT` | `22` | SSH port (HA OS typically uses `22222`) |
+| `--key PATH` | *(none)* | Path to SSH private key file |
+| `--config PATH` | `/config` | HA config directory on the target machine |
+| `--no-interactive` | *(off)* | Skip confirmation prompts (auto-yes) |
+
+#### What the script does
+
+1. **Detects** the old installation (`stoveOnOff.py` and `.env` in `/config/scripts/`)
+2. **Reads** your old `.env` to extract the Device ID and default settings
+3. **Scans** `configuration.yaml` for `command_line` and `generic_thermostat` entries to remove
+4. **Checks** if the new `custom_components/duepi` integration is already installed
+5. **Backs up** old files to `/config/duepi_migration_backup/` then removes them
+6. **Prints** step-by-step instructions to finish the migration in the HA UI
+
+#### Example output
+
+```
+============================================================
+  Duepi Pellet Stove — Migration Script
+============================================================
+  Mode: SSH remote → root@192.168.1.100
+  HA config: /config
+
+[Step 1] Detecting old installation
+  ✓ Found old script: /config/scripts/stoveOnOff.py
+  ✓ Found old .env: /config/scripts/.env
+
+[Step 2] Reading old credentials
+  ✓ Device ID: a1b2c3d4e5f6...
+  ✓ Session cookie found (will NOT be migrated — new integration uses email/password)
+  ✓ Default power: 5
+  ✓ Default temperature: 25°C
+
+[Step 3] Scanning configuration.yaml for old entries
+  ⚠ Found command_line references to stoveOnOff.py:
+      command_on: "python3 /config/scripts/stoveOnOff.py on"
+      command_off: "python3 /config/scripts/stoveOnOff.py off"
+      command_state: "python3 /config/scripts/stoveOnOff.py status"
+  ✓ No generic_thermostat stove entries found
+
+[Step 4] Checking new custom integration
+  ✓ New integration already installed at custom_components/duepi/
+
+[Step 5] Backup and cleanup
+  ✓ Backed up: /config/scripts/stoveOnOff.py → /config/duepi_migration_backup/
+  ✓ Backed up: /config/scripts/.env → /config/duepi_migration_backup/
+  ✓ Removed: /config/scripts/stoveOnOff.py
+  ✓ Removed: /config/scripts/.env
+
+[Step 6] Next steps
+  ...
+```
+
+### Manual migration
+
+If you prefer to migrate manually without the script:
+
+1. Install the custom integration (see [Installation](#installation)).
+2. Remove from your `configuration.yaml`:
+   - The `command_line` switch and sensor entries referencing `stoveOnOff.py`
    - The `generic_thermostat` climate entry (if used)
-4. Delete `/config/scripts/stoveOnOff.py` and `/config/scripts/.env` from your HA instance.
-5. Update any automations:
-   - Replace `switch.pellet_stove` → use the new `climate.duepi_pellet_stove` entity
-   - Replace `sensor.pellet_stove_info` attributes → use the individual sensor entities
-6. Restart Home Assistant.
+3. Restart Home Assistant.
+4. Add the integration via the UI with your dpremoteiot.com **email and password**.
+5. Delete `/config/scripts/stoveOnOff.py` and `/config/scripts/.env`.
+6. Update any automations using the entity mapping below.
 
-The old script files are preserved in the `legacy/` folder for reference.
+### Entity mapping (old → new)
+
+| Old entity | New entity |
+|---|---|
+| `switch.pellet_stove` | `climate.duepi_pellet_stove` |
+| `sensor.pellet_stove_info` (room_temperature) | `sensor.duepi_pellet_stove_room_temperature` |
+| `sensor.pellet_stove_info` (working_power) | `sensor.duepi_pellet_stove_power_level` |
+| `sensor.pellet_stove_info` (status_text) | `sensor.duepi_pellet_stove_status` |
+| `sensor.pellet_stove_info` (online) | `binary_sensor.duepi_pellet_stove_online` |
+
+The old script files are preserved in the `legacy/` folder of this repository for reference.
 
 ## Known Limitations
 
