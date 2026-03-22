@@ -150,6 +150,10 @@ python3 migrate.py --ssh root@homeassistant --no-interactive
 
 # Custom HA config directory (default is /config):
 python3 migrate.py --ssh root@homeassistant --config /home/homeassistant/.homeassistant
+
+# Rollback — restore old files and remove the custom integration:
+python3 migrate.py --rollback
+python3 migrate.py --rollback --ssh root@homeassistant
 ```
 
 #### Script options
@@ -160,6 +164,7 @@ python3 migrate.py --ssh root@homeassistant --config /home/homeassistant/.homeas
 | `--port PORT` | `22` | SSH port (HA OS typically uses `22222`) |
 | `--key PATH` | *(none)* | Path to SSH private key file |
 | `--config PATH` | `/config` | HA config directory on the target machine |
+| `--rollback` | *(off)* | Restore old files from backup and remove the custom integration |
 | `--no-interactive` | *(off)* | Skip confirmation prompts (auto-yes) |
 
 #### What the script does
@@ -209,6 +214,26 @@ python3 migrate.py --ssh root@homeassistant --config /home/homeassistant/.homeas
 [Step 6] Next steps
   ...
 ```
+
+### Rollback
+
+If the new integration doesn't work as expected, you can rollback to the old script-based setup:
+
+```bash
+# Locally:
+python3 migrate.py --rollback
+
+# Or via SSH:
+python3 migrate.py --rollback --ssh root@homeassistant
+```
+
+The rollback will:
+1. Restore `stoveOnOff.py` and `.env` from the backup to `/config/scripts/`
+2. Remove the `custom_components/duepi/` integration
+3. Clean up the backup directory
+4. Print instructions to re-add old YAML configuration and restart HA
+
+> **Note:** The rollback only restores the script files. You will need to manually re-add the `command_line` and `generic_thermostat` entries to your `configuration.yaml` (see the `legacy/` folder for reference configs).
 
 ### Manual migration
 

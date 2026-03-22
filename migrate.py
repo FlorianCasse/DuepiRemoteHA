@@ -2,27 +2,22 @@
 """Migration script from legacy stoveOnOff.py setup to the new Duepi custom integration.
 
 Usage:
-  Local (on HA instance):
+  Migrate (local or remote):
     python3 migrate.py
-
-  Remote via SSH:
     python3 migrate.py --ssh user@homeassistant
     python3 migrate.py --ssh user@192.168.1.100 --port 22222
-    python3 migrate.py --ssh root@homeassistant --key ~/.ssh/ha_key
+
+  Rollback:
+    python3 migrate.py --rollback
+    python3 migrate.py --rollback --ssh root@homeassistant
 
   Options:
     --ssh HOST        SSH destination (user@host)
     --port PORT       SSH port (default: 22)
     --key PATH        Path to SSH private key
     --config PATH     HA config directory (default: /config)
+    --rollback        Restore old files from backup and remove the custom integration
     --no-interactive  Skip confirmation prompts (auto-yes)
-
-It will:
-  1. Detect and read the old .env credentials
-  2. Scan configuration.yaml for old command_line / generic_thermostat entries
-  3. Back up and clean up old files
-  4. Check the new custom_components/duepi integration
-  5. Print next steps to complete the migration in the HA UI
 """
 
 from __future__ import annotations
@@ -112,6 +107,9 @@ class RemoteExecutor:
     def remove(self, path: str) -> None:
         self._run(f"rm -f {path}")
 
+    def remove_dir(self, path: str) -> None:
+        self._run(f"rm -rf {path}")
+
 
 class LocalExecutor:
     """Execute file operations locally."""
@@ -141,6 +139,11 @@ class LocalExecutor:
         p = Path(path)
         if p.is_file():
             p.unlink()
+
+    def remove_dir(self, path: str) -> None:
+        p = Path(path)
+        if p.is_dir():
+            shutil.rmtree(p)
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +184,105 @@ def detect_old_yaml_entries(content: str) -> dict[str, list[str]]:
             found["climate"].append(line)
 
     return found
+
+
+def run_rollback(executor: LocalExecutor | RemoteExecutor, ha_config: str, interactive: bool) -> None:
+    """Restore backed-up files and optionally remove the new integration."""
+    backup_dir = f"{ha_config}/duepi_migration_backup"
+    scripts_dir = f"{ha_config}/scripts"
+    integration_dir = f"{ha_config}/custom_components/duepi"
+
+    print(f"\n{BOLD}{'=' * 60}{RESET}")
+    print(f"{BOLD}  Duepi Pellet Stove — Rollback{RESET}")
+    print(f"{BOLD}{'=' * 60}{RESET}")
+
+    is_remote = isinstance(executor, RemoteExecutor)
+    if is_remote:
+        print(f"  Mode: {CYAN}SSH remote{RESET} → {executor._host}")
+    else:
+        print(f"  Mode: {CYAN}Local{RESET}")
+
+    # --- Step 1: Check backup exists ---
+    print_step(1, "Checking backup")
+
+    has_backup_script = executor.file_exists(f"{backup_dir}/stoveOnOff.py")
+    has_backup_env = executor.file_exists(f"{backup_dir}/.env")
+
+    if not has_backup_script and not has_backup_env:
+        print_err(f"No backup found at {backup_dir}/")
+        print_warn("Nothing to rollback. The backup is created during migration (step 5).")
+        return
+
+    if has_backup_script:
+        print_ok(f"Found backup: {backup_dir}/stoveOnOff.py")
+    if has_backup_env:
+        print_ok(f"Found backup: {backup_dir}/.env")
+
+    # --- Step 2: Restore files ---
+    print_step(2, "Restoring old files")
+
+    proceed = True
+    if interactive:
+        print(f"\n  This will:")
+        print(f"    - Restore stoveOnOff.py and .env to {scripts_dir}/")
+        print(f"    - Remove the custom integration at {integration_dir}/")
+        print(f"    - Remove the backup directory")
+        answer = input(f"\n  {BOLD}Proceed with rollback? [y/N]{RESET} ").strip().lower()
+        proceed = answer in ("y", "yes")
+
+    if not proceed:
+        print_warn("Rollback cancelled.")
+        return
+
+    executor.mkdir(scripts_dir)
+
+    for filename in ["stoveOnOff.py", ".env"]:
+        src = f"{backup_dir}/{filename}"
+        dst = f"{scripts_dir}/{filename}"
+        if executor.file_exists(src):
+            executor.copy(src, dst)
+            print_ok(f"Restored: {src} → {dst}")
+
+    # --- Step 3: Remove new integration ---
+    print_step(3, "Removing new custom integration")
+
+    if executor.dir_exists(integration_dir):
+        executor.remove_dir(integration_dir)
+        print_ok(f"Removed: {integration_dir}/")
+    else:
+        print_ok("Custom integration not installed (nothing to remove)")
+
+    # --- Step 4: Clean up backup ---
+    print_step(4, "Cleaning up backup")
+
+    if executor.dir_exists(backup_dir):
+        executor.remove_dir(backup_dir)
+        print_ok(f"Removed backup directory: {backup_dir}/")
+
+    # --- Step 5: Next steps ---
+    print_step(5, "Next steps")
+
+    print(f"""
+  {BOLD}To complete the rollback:{RESET}
+
+  1. {BOLD}Re-add old YAML configuration{RESET} to your configuration.yaml:
+     - The {CYAN}command_line{RESET} switch and sensor entries
+     - The {CYAN}generic_thermostat{RESET} climate entry (if you had one)
+     (See the legacy/ folder in the repo for reference configs)
+
+  2. {BOLD}Remove the Duepi integration{RESET} from Home Assistant (if added):
+     Settings → Devices & Services → Duepi Pellet Stove → Delete
+
+  3. {BOLD}Restart Home Assistant{RESET}
+     Settings → System → Restart
+
+  4. {BOLD}Verify{RESET} the old stove switch is back:
+     Check that {CYAN}switch.pellet_stove{RESET} works correctly
+""")
+
+    print(f"{BOLD}{'=' * 60}{RESET}")
+    print(f"{GREEN}{BOLD}  Rollback complete!{RESET}")
+    print(f"{BOLD}{'=' * 60}{RESET}\n")
 
 
 def run_migration(executor: LocalExecutor | RemoteExecutor, ha_config: str, interactive: bool) -> None:
@@ -373,6 +475,8 @@ def parse_args() -> argparse.Namespace:
   python3 migrate.py --ssh root@ha --port 22222   # Custom SSH port
   python3 migrate.py --ssh root@ha --key ~/.ssh/id # With SSH key
   python3 migrate.py --ssh root@ha --no-interactive # No prompts
+  python3 migrate.py --rollback                   # Rollback locally
+  python3 migrate.py --rollback --ssh root@ha     # Rollback via SSH
 """,
     )
     parser.add_argument(
@@ -395,6 +499,11 @@ def parse_args() -> argparse.Namespace:
         "--config",
         default="/config",
         help="HA config directory on the target (default: /config)",
+    )
+    parser.add_argument(
+        "--rollback",
+        action="store_true",
+        help="Restore old files from backup and remove the custom integration",
     )
     parser.add_argument(
         "--no-interactive",
@@ -425,7 +534,10 @@ def main() -> None:
     else:
         executor = LocalExecutor()
 
-    run_migration(executor, args.config, interactive)
+    if args.rollback:
+        run_rollback(executor, args.config, interactive)
+    else:
+        run_migration(executor, args.config, interactive)
 
 
 if __name__ == "__main__":
