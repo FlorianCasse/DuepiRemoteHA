@@ -1,7 +1,9 @@
-command_line: 
+command_line:
   - switch:
-      name: StoveOnOff
+      name: Pellet Stove
+      unique_id: switch_pellet_stove
       command_on: "python3 /config/scripts/stoveOnOff.py On"
       command_off: "python3 /config/scripts/stoveOnOff.py Off"
-      command_state: "python3 /config/scripts/stoveStatus.py" #Not used
-      value_template: "{{ value != 'Stove Off' }}"
+      command_state: "python3 /config/scripts/stoveOnOff.py Status"
+      value_template: "{{ value == '1' }}"
+      scan_interval: 300
