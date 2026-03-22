@@ -1,0 +1,71 @@
+{
+  "title": "Duepi Pellet Stove",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to dpremoteiot.com",
+        "description": "Enter your dpremoteiot.com account credentials and device ID.",
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "device_id": "Device ID"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "Your session has expired. Please re-enter your credentials.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Cannot connect to dpremoteiot.com.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "reauth_successful": "Re-authentication successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Settings",
+        "data": {
+          "scan_interval": "Update interval (seconds)",
+          "default_power": "Default power level (1-5)",
+          "default_temperature": "Default temperature (°C)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "room_temperature": {
+        "name": "Room temperature"
+      },
+      "power_level": {
+        "name": "Power level"
+      },
+      "status": {
+        "name": "Status"
+      },
+      "set_temperature": {
+        "name": "Set temperature"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      }
+    },
+    "number": {
+      "power_level": {
+        "name": "Power level"
+      }
+    }
+  }
+}

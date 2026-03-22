@@ -1,0 +1,71 @@
+{
+  "title": "Poêle à pellets Duepi",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connexion à dpremoteiot.com",
+        "description": "Entrez vos identifiants dpremoteiot.com et l'ID de votre appareil.",
+        "data": {
+          "email": "Email",
+          "password": "Mot de passe",
+          "device_id": "ID de l'appareil"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Réauthentification",
+        "description": "Votre session a expiré. Veuillez ressaisir vos identifiants.",
+        "data": {
+          "email": "Email",
+          "password": "Mot de passe"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Email ou mot de passe invalide.",
+      "cannot_connect": "Impossible de se connecter à dpremoteiot.com.",
+      "unknown": "Une erreur inattendue s'est produite."
+    },
+    "abort": {
+      "already_configured": "Cet appareil est déjà configuré.",
+      "reauth_successful": "Réauthentification réussie."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Paramètres",
+        "data": {
+          "scan_interval": "Intervalle de mise à jour (secondes)",
+          "default_power": "Puissance par défaut (1-5)",
+          "default_temperature": "Température par défaut (°C)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "room_temperature": {
+        "name": "Température ambiante"
+      },
+      "power_level": {
+        "name": "Niveau de puissance"
+      },
+      "status": {
+        "name": "Statut"
+      },
+      "set_temperature": {
+        "name": "Température de consigne"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "En ligne"
+      }
+    },
+    "number": {
+      "power_level": {
+        "name": "Niveau de puissance"
+      }
+    }
+  }
+}
