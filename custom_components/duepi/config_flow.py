@@ -159,9 +159,6 @@ class DuepiConfigFlow(ConfigFlow, domain=DOMAIN):
 class DuepiOptionsFlow(OptionsFlow):
     """Handle options for Duepi integration."""
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        self._config_entry = config_entry
-
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -169,7 +166,7 @@ class DuepiOptionsFlow(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(data=user_input)
 
-        options = self._config_entry.options
+        options = self.config_entry.options
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(

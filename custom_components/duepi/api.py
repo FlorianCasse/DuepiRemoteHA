@@ -9,9 +9,13 @@ from dataclasses import dataclass
 
 import aiohttp
 
-from .const import URL_DASHBOARD, URL_LOGIN, URL_SET_SETTINGS
+from .const import DEFAULT_POWER, DEFAULT_TEMPERATURE, URL_DASHBOARD, URL_LOGIN, URL_SET_SETTINGS
 
 _LOGGER = logging.getLogger(__name__)
+
+# --- HTTP constants ---
+TIMEOUT_DEFAULT = aiohttp.ClientTimeout(total=15)
+TIMEOUT_COMMAND = aiohttp.ClientTimeout(total=10)
 
 HEADERS = {
     "User-Agent": (
@@ -21,6 +25,25 @@ HEADERS = {
     "Referer": "https://dpremoteiot.com/dashboard",
     "Origin": "https://dpremoteiot.com",
 }
+
+HEADERS_FORM = {**HEADERS, "Content-Type": "application/x-www-form-urlencoded"}
+
+# --- Pre-compiled regex patterns ---
+_RE_POWER_STATUS = re.compile(r"Power Status\s*:?\s*(ON|OFF)", re.IGNORECASE)
+_RE_POWER_STATE = re.compile(r"powerState.*?(ON|OFF)", re.DOTALL | re.IGNORECASE)
+_RE_STATUS_TEXT = re.compile(
+    r"Status\s*:?\s*\n?\s*((?:Heating|Cooling|Standby|Off|Idle)[\w\s/°.]*\d*)",
+    re.IGNORECASE,
+)
+_RE_ROOM_TEMP = re.compile(r"Room Temperature\s*(\d+)", re.IGNORECASE)
+_RE_SETTED_POWER = re.compile(r'settedPower.*?value="(\d+)"', re.DOTALL | re.IGNORECASE)
+_RE_WORKING_POWER = re.compile(r'Working Power.*?<input[^>]*value="(\d+)"', re.DOTALL | re.IGNORECASE)
+_RE_SETTED_TEMP = re.compile(r'settedTemperature.*?value="(\d+)"', re.DOTALL | re.IGNORECASE)
+_RE_SET_TEMP = re.compile(r'Set Temperature.*?<input[^>]*value="(\d+)"', re.DOTALL | re.IGNORECASE)
+_RE_ONLINE = re.compile(r"Status\s*:?\s*<[^>]*>(Online|Offline)", re.IGNORECASE)
+_RE_CSRF_INPUT = re.compile(r'<input[^>]*name=["\']_csrf["\'][^>]*value=["\']([^"\']+)["\']', re.IGNORECASE)
+_RE_CSRF_INPUT_ALT = re.compile(r'<input[^>]*value=["\']([^"\']+)["\'][^>]*name=["\']_csrf["\']', re.IGNORECASE)
+_RE_CSRF_META = re.compile(r'<meta[^>]*name=["\']csrf-token["\'][^>]*content=["\']([^"\']+)["\']', re.IGNORECASE)
 
 
 class DuepiApiError(Exception):
@@ -67,11 +90,18 @@ class DuepiCloudClient:
         self._device_id = device_id
         self._authenticated = False
         self._auth_lock = asyncio.Lock()
+        self._device_block_re = re.compile(
+            rf"{re.escape(device_id)}.*?(?=deviceid=|$)", re.DOTALL
+        )
 
     @property
     def device_id(self) -> str:
         """Return the device ID."""
         return self._device_id
+
+    async def async_close(self) -> None:
+        """Close the underlying HTTP session."""
+        await self._session.close()
 
     async def async_login(self) -> bool:
         """Authenticate with dpremoteiot.com and obtain a session cookie.
@@ -81,15 +111,13 @@ class DuepiCloudClient:
         """
         async with self._auth_lock:
             try:
-                # Step 1: GET /login to find CSRF token
                 async with self._session.get(
-                    URL_LOGIN, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=15)
+                    URL_LOGIN, headers=HEADERS, timeout=TIMEOUT_DEFAULT
                 ) as resp:
                     login_html = await resp.text()
 
                 csrf_token = self._extract_csrf(login_html)
 
-                # Step 2: POST /login with credentials
                 data: dict[str, str] = {
                     "email": self._email,
                     "password": self._password,
@@ -100,9 +128,9 @@ class DuepiCloudClient:
                 async with self._session.post(
                     URL_LOGIN,
                     data=data,
-                    headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
+                    headers=HEADERS_FORM,
                     allow_redirects=False,
-                    timeout=aiohttp.ClientTimeout(total=15),
+                    timeout=TIMEOUT_DEFAULT,
                 ) as resp:
                     if resp.status in (301, 302):
                         location = resp.headers.get("Location", "")
@@ -111,7 +139,6 @@ class DuepiCloudClient:
                             _LOGGER.debug("Login successful (redirect to %s)", location)
                             return True
 
-                    # Check if we landed on the dashboard directly (some servers don't redirect)
                     if resp.status == 200:
                         body = await resp.text()
                         if "dashboard" in body.lower() and "sign in" not in body.lower():
@@ -137,7 +164,6 @@ class DuepiCloudClient:
         try:
             html = await self._fetch_dashboard()
         except DuepiAuthError:
-            # Session expired, re-login once
             self._authenticated = False
             await self._ensure_auth()
             html = await self._fetch_dashboard()
@@ -152,21 +178,23 @@ class DuepiCloudClient:
         """Turn the stove off."""
         await self._send_command(active=False)
 
-    async def async_set_power(self, power: int) -> None:
+    async def async_set_power(self, power: int, current_state: DuepiStoveState | None = None) -> None:
         """Set the working power level (1-5) without changing on/off state."""
-        state = await self.async_get_stove_state()
+        if current_state is None:
+            current_state = await self.async_get_stove_state()
         await self._send_command(
-            active=state.power_on,
+            active=current_state.power_on,
             power=power,
-            temperature=state.set_temperature,
+            temperature=current_state.set_temperature,
         )
 
-    async def async_set_temperature(self, temperature: int) -> None:
+    async def async_set_temperature(self, temperature: int, current_state: DuepiStoveState | None = None) -> None:
         """Set the target temperature (0-35) without changing on/off state."""
-        state = await self.async_get_stove_state()
+        if current_state is None:
+            current_state = await self.async_get_stove_state()
         await self._send_command(
-            active=state.power_on,
-            power=state.working_power,
+            active=current_state.power_on,
+            power=current_state.working_power,
             temperature=temperature,
         )
 
@@ -185,18 +213,17 @@ class DuepiCloudClient:
                 URL_DASHBOARD,
                 headers=HEADERS,
                 allow_redirects=False,
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=TIMEOUT_DEFAULT,
             ) as resp:
                 if resp.status in (301, 302):
                     location = resp.headers.get("Location", "")
                     if "/login" in location:
                         self._authenticated = False
                         raise DuepiAuthError("Session expired (redirected to login)")
-                    # Follow other redirects
                     async with self._session.get(
                         location,
                         headers=HEADERS,
-                        timeout=aiohttp.ClientTimeout(total=15),
+                        timeout=TIMEOUT_DEFAULT,
                     ) as resp2:
                         html = await resp2.text()
                 else:
@@ -205,8 +232,8 @@ class DuepiCloudClient:
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             raise DuepiConnectionError(f"Cannot reach dpremoteiot.com: {err}") from err
 
-        # Check if we got the login page instead of the dashboard
-        if "sign in" in html[:1000].lower() or "<form" in html[:1000].lower() and "login" in html[:2000].lower():
+        html_lower = html[:2000].lower()
+        if "sign in" in html_lower or ("login" in html_lower and "<form" in html_lower):
             self._authenticated = False
             raise DuepiAuthError("Session expired (received login page)")
 
@@ -221,8 +248,6 @@ class DuepiCloudClient:
         """Send a control command to the stove."""
         await self._ensure_auth()
 
-        from .const import DEFAULT_POWER, DEFAULT_TEMPERATURE
-
         data = {
             "deviceId": self._device_id,
             "active": "1" if active else "0",
@@ -232,83 +257,54 @@ class DuepiCloudClient:
             "switch": "on" if active else "off",
         }
 
-        try:
-            async with self._session.post(
-                URL_SET_SETTINGS,
-                data=data,
-                headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status in (301, 302):
-                    location = resp.headers.get("Location", "")
-                    if "/login" in location:
-                        self._authenticated = False
-                        raise DuepiAuthError("Session expired during command")
-                resp.raise_for_status()
-                _LOGGER.debug(
-                    "Command sent: active=%s power=%s temp=%s (HTTP %d)",
-                    active, power, temperature, resp.status,
-                )
-        except DuepiAuthError:
-            # Retry once after re-login
-            self._authenticated = False
-            await self._ensure_auth()
-            async with self._session.post(
-                URL_SET_SETTINGS,
-                data=data,
-                headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                resp.raise_for_status()
-        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            raise DuepiConnectionError(f"Failed to send command: {err}") from err
+        for attempt in range(2):
+            try:
+                async with self._session.post(
+                    URL_SET_SETTINGS,
+                    data=data,
+                    headers=HEADERS_FORM,
+                    timeout=TIMEOUT_COMMAND,
+                ) as resp:
+                    if resp.status in (301, 302):
+                        location = resp.headers.get("Location", "")
+                        if "/login" in location:
+                            self._authenticated = False
+                            raise DuepiAuthError("Session expired during command")
+                    resp.raise_for_status()
+                    _LOGGER.debug(
+                        "Command sent: active=%s power=%s temp=%s (HTTP %d)",
+                        active, power, temperature, resp.status,
+                    )
+                return
+            except DuepiAuthError:
+                if attempt == 0:
+                    self._authenticated = False
+                    await self._ensure_auth()
+                else:
+                    raise
+            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                raise DuepiConnectionError(f"Failed to send command: {err}") from err
 
     def _parse_dashboard(self, html: str) -> DuepiStoveState:
-        """Parse the dashboard HTML to extract stove state using regex."""
+        """Parse the dashboard HTML to extract stove state."""
         block = self._extract_device_block(html)
 
-        # Power Status (ON/OFF)
-        power_match = re.search(r"Power Status\s*:?\s*(ON|OFF)", block, re.IGNORECASE)
-        if not power_match:
-            power_match = re.search(r"powerState.*?(ON|OFF)", block, re.DOTALL | re.IGNORECASE)
+        power_match = _RE_POWER_STATUS.search(block) or _RE_POWER_STATE.search(block)
         power_on = power_match.group(1).upper() == "ON" if power_match else False
 
-        # Status text
-        status_match = re.search(
-            r"Status\s*:?\s*\n?\s*((?:Heating|Cooling|Standby|Off|Idle)[\w\s/°.]*\d*)",
-            block,
-            re.IGNORECASE,
-        )
+        status_match = _RE_STATUS_TEXT.search(block)
         status_text = status_match.group(1).strip() if status_match else None
 
-        # Room temperature
-        temp_match = re.search(r"Room Temperature\s*(\d+)", block, re.IGNORECASE)
+        temp_match = _RE_ROOM_TEMP.search(block)
         room_temp = float(temp_match.group(1)) if temp_match else None
 
-        # Working Power from input field
-        power_val_match = re.search(
-            r'settedPower.*?value="(\d+)"', block, re.DOTALL | re.IGNORECASE
-        )
-        if not power_val_match:
-            power_val_match = re.search(
-                r'Working Power.*?<input[^>]*value="(\d+)"', block, re.DOTALL | re.IGNORECASE
-            )
+        power_val_match = _RE_SETTED_POWER.search(block) or _RE_WORKING_POWER.search(block)
         working_power = int(power_val_match.group(1)) if power_val_match else None
 
-        # Set Temperature from input field
-        temp_val_match = re.search(
-            r'settedTemperature.*?value="(\d+)"', block, re.DOTALL | re.IGNORECASE
-        )
-        if not temp_val_match:
-            temp_val_match = re.search(
-                r'Set Temperature.*?<input[^>]*value="(\d+)"', block, re.DOTALL | re.IGNORECASE
-            )
+        temp_val_match = _RE_SETTED_TEMP.search(block) or _RE_SET_TEMP.search(block)
         set_temp = int(temp_val_match.group(1)) if temp_val_match else None
 
-        # Online/Offline badge
-        online_match = re.search(
-            r"Status\s*:?\s*<[^>]*>(Online|Offline)", block, re.IGNORECASE
-        )
+        online_match = _RE_ONLINE.search(block)
         online = online_match.group(1).lower() == "online" if online_match else None
 
         return DuepiStoveState(
@@ -322,37 +318,14 @@ class DuepiCloudClient:
 
     def _extract_device_block(self, html: str) -> str:
         """Extract the HTML block for our device from the dashboard."""
-        pattern = rf"{re.escape(self._device_id)}.*?(?=deviceid=|$)"
-        match = re.search(pattern, html, re.DOTALL)
+        match = self._device_block_re.search(html)
         return match.group(0) if match else html
 
     @staticmethod
     def _extract_csrf(html: str) -> str | None:
         """Extract a CSRF token from the login page HTML."""
-        # Common patterns: <input type="hidden" name="_csrf" value="...">
-        # or <meta name="csrf-token" content="...">
-        match = re.search(
-            r'<input[^>]*name=["\']_csrf["\'][^>]*value=["\']([^"\']+)["\']',
-            html,
-            re.IGNORECASE,
-        )
-        if match:
-            return match.group(1)
-
-        match = re.search(
-            r'<input[^>]*value=["\']([^"\']+)["\'][^>]*name=["\']_csrf["\']',
-            html,
-            re.IGNORECASE,
-        )
-        if match:
-            return match.group(1)
-
-        match = re.search(
-            r'<meta[^>]*name=["\']csrf-token["\'][^>]*content=["\']([^"\']+)["\']',
-            html,
-            re.IGNORECASE,
-        )
-        if match:
-            return match.group(1)
-
+        for pattern in (_RE_CSRF_INPUT, _RE_CSRF_INPUT_ALT, _RE_CSRF_META):
+            match = pattern.search(html)
+            if match:
+                return match.group(1)
         return None

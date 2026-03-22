@@ -3,9 +3,7 @@
 DOMAIN = "duepi"
 PLATFORMS = ["climate", "sensor", "binary_sensor", "number"]
 
-# Config entry data keys
-CONF_EMAIL = "email"
-CONF_PASSWORD = "password"
+# Config entry data keys (CONF_EMAIL and CONF_PASSWORD come from homeassistant.const)
 CONF_DEVICE_ID = "device_id"
 
 # Options keys

@@ -67,7 +67,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: DuepiConfigEntry) -> bo
 
     if unload_ok:
         coordinator: DuepiCoordinator = entry.runtime_data
-        await coordinator.client._session.close()
+        await coordinator.client.async_close()
 
     return unload_ok
 

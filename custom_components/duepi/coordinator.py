@@ -69,10 +69,10 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
 
     async def async_set_power(self, power: int) -> None:
         """Set working power and refresh."""
-        await self.client.async_set_power(power)
+        await self.client.async_set_power(power, current_state=self.data)
         await self.async_request_refresh()
 
     async def async_set_temperature(self, temperature: int) -> None:
         """Set target temperature and refresh."""
-        await self.client.async_set_temperature(temperature)
+        await self.client.async_set_temperature(temperature, current_state=self.data)
         await self.async_request_refresh()
