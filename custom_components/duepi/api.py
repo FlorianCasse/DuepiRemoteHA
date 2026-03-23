@@ -249,12 +249,11 @@ class DuepiCloudClient:
         await self._ensure_auth()
 
         data = {
-            "deviceId": self._device_id,
+            "deviceid": self._device_id,
             "active": "1" if active else "0",
             "emailNotifications": "0",
             "settedPower": str(power if power is not None else DEFAULT_POWER),
             "settedTemperature": str(temperature if temperature is not None else DEFAULT_TEMPERATURE),
-            "switch": "on" if active else "off",
         }
 
         last_err: Exception | None = None

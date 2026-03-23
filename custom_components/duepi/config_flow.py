@@ -182,7 +182,7 @@ class DuepiOptionsFlow(OptionsFlow):
                     vol.Optional(
                         CONF_DEFAULT_TEMPERATURE,
                         default=options.get(CONF_DEFAULT_TEMPERATURE, DEFAULT_TEMPERATURE),
-                    ): vol.All(vol.Coerce(int), vol.Range(min=0, max=35)),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=5, max=90)),
                 }
             ),
         )
