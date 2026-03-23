@@ -277,6 +277,10 @@ class DuepiCloudClient:
         await self._ensure_auth()
 
         effective_id = self._api_device_id or self._device_id
+        _LOGGER.info(
+            "Sending command: api_device_id=%s, config_device_id=%s, effective_id=%s",
+            self._api_device_id, self._device_id, effective_id,
+        )
         data = {
             "deviceid": effective_id,
             "active": "1" if active else "0",
@@ -284,6 +288,7 @@ class DuepiCloudClient:
             "settedPower": str(power if power is not None else DEFAULT_POWER),
             "settedTemperature": str(temperature if temperature is not None else DEFAULT_TEMPERATURE),
         }
+        _LOGGER.info("Command payload: %s", data)
 
         last_err: Exception | None = None
         for attempt in range(3):
@@ -344,10 +349,10 @@ class DuepiCloudClient:
                 api_id = device_json.get("_id")
                 if api_id:
                     self._api_device_id = api_id
-                    _LOGGER.debug("Resolved API device ID from JSON: %s", api_id)
+                    _LOGGER.info("Resolved API device ID from JSON: %s", api_id)
 
             settings = device_json.get("deviceCurrentSettings", {})
-            _LOGGER.debug("Parsed device JSON settings: %s", settings)
+            _LOGGER.info("Parsed device JSON settings: %s", settings)
 
             power_state = str(settings.get("powerState", "OFF")).upper()
             return DuepiStoveState(
@@ -360,7 +365,7 @@ class DuepiCloudClient:
             )
 
         # Fallback: regex parsing on rendered HTML
-        _LOGGER.debug("JSON extraction failed, falling back to regex parsing")
+        _LOGGER.info("JSON extraction failed, falling back to regex parsing")
 
         # Extract the MongoDB ObjectId that precedes our short device ID
         if not self._api_device_id:
@@ -370,7 +375,7 @@ class DuepiCloudClient:
             )
             if api_id_match:
                 self._api_device_id = api_id_match.group(1)
-                _LOGGER.debug("Resolved API device ID from HTML: %s", self._api_device_id)
+                _LOGGER.info("Resolved API device ID from HTML: %s", self._api_device_id)
             else:
                 _LOGGER.warning("Could not resolve API device ID from dashboard")
 
