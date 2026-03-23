@@ -257,7 +257,8 @@ class DuepiCloudClient:
             "switch": "on" if active else "off",
         }
 
-        for attempt in range(2):
+        last_err: Exception | None = None
+        for attempt in range(3):
             try:
                 async with self._session.post(
                     URL_SET_SETTINGS,
@@ -270,6 +271,19 @@ class DuepiCloudClient:
                         if "/login" in location:
                             self._authenticated = False
                             raise DuepiAuthError("Session expired during command")
+                    if resp.status >= 500:
+                        _LOGGER.warning(
+                            "Server error on attempt %d: %d, message='%s', url='%s'",
+                            attempt + 1, resp.status, resp.reason, resp.url,
+                        )
+                        last_err = DuepiConnectionError(
+                            f"Failed to send command: {resp.status}, "
+                            f"message='{resp.reason}', url='{resp.url}'"
+                        )
+                        if attempt < 2:
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                        raise last_err
                     resp.raise_for_status()
                     _LOGGER.debug(
                         "Command sent: active=%s power=%s temp=%s (HTTP %d)",
@@ -282,6 +296,8 @@ class DuepiCloudClient:
                     await self._ensure_auth()
                 else:
                     raise
+            except DuepiConnectionError:
+                raise
             except (aiohttp.ClientError, asyncio.TimeoutError) as err:
                 raise DuepiConnectionError(f"Failed to send command: {err}") from err
 
