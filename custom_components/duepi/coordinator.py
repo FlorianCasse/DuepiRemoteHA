@@ -60,19 +60,62 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         power = state.working_power if state else DEFAULT_POWER
         temperature = state.set_temperature if state else DEFAULT_TEMPERATURE
         await self.client.async_turn_on(power=power, temperature=temperature)
-        await self.async_request_refresh()
+        if state:
+            self.async_set_updated_data(
+                DuepiStoveState(
+                    power_on=True,
+                    status_text=state.status_text,
+                    room_temperature=state.room_temperature,
+                    working_power=power,
+                    set_temperature=temperature,
+                    online=state.online,
+                )
+            )
 
     async def async_turn_off(self) -> None:
         """Turn the stove off and refresh."""
         await self.client.async_turn_off()
-        await self.async_request_refresh()
+        state = self.data
+        if state:
+            self.async_set_updated_data(
+                DuepiStoveState(
+                    power_on=False,
+                    status_text=state.status_text,
+                    room_temperature=state.room_temperature,
+                    working_power=state.working_power,
+                    set_temperature=state.set_temperature,
+                    online=state.online,
+                )
+            )
 
     async def async_set_power(self, power: int) -> None:
         """Set working power and refresh."""
         await self.client.async_set_power(power, current_state=self.data)
-        await self.async_request_refresh()
+        state = self.data
+        if state:
+            self.async_set_updated_data(
+                DuepiStoveState(
+                    power_on=state.power_on,
+                    status_text=state.status_text,
+                    room_temperature=state.room_temperature,
+                    working_power=power,
+                    set_temperature=state.set_temperature,
+                    online=state.online,
+                )
+            )
 
     async def async_set_temperature(self, temperature: int) -> None:
         """Set target temperature and refresh."""
         await self.client.async_set_temperature(temperature, current_state=self.data)
-        await self.async_request_refresh()
+        state = self.data
+        if state:
+            self.async_set_updated_data(
+                DuepiStoveState(
+                    power_on=state.power_on,
+                    status_text=state.status_text,
+                    room_temperature=state.room_temperature,
+                    working_power=state.working_power,
+                    set_temperature=temperature,
+                    online=state.online,
+                )
+            )
