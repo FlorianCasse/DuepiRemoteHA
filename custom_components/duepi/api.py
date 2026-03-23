@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import html
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -44,6 +46,26 @@ _RE_ONLINE = re.compile(r"Status\s*:?\s*<[^>]*>(Online|Offline)", re.IGNORECASE)
 _RE_CSRF_INPUT = re.compile(r'<input[^>]*name=["\']_csrf["\'][^>]*value=["\']([^"\']+)["\']', re.IGNORECASE)
 _RE_CSRF_INPUT_ALT = re.compile(r'<input[^>]*value=["\']([^"\']+)["\'][^>]*name=["\']_csrf["\']', re.IGNORECASE)
 _RE_CSRF_META = re.compile(r'<meta[^>]*name=["\']csrf-token["\'][^>]*content=["\']([^"\']+)["\']', re.IGNORECASE)
+
+
+def _safe_int(value: object) -> int | None:
+    """Convert a value to int, returning None on failure."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _safe_float(value: object) -> float | None:
+    """Convert a value to float, returning None on failure."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
 
 
 class DuepiApiError(Exception):
@@ -289,15 +311,32 @@ class DuepiCloudClient:
             except (aiohttp.ClientError, asyncio.TimeoutError) as err:
                 raise DuepiConnectionError(f"Failed to send command: {err}") from err
 
-    def _parse_dashboard(self, html: str) -> DuepiStoveState:
-        """Parse the dashboard HTML to extract stove state."""
-        block = self._extract_device_block(html)
+    def _parse_dashboard(self, page_html: str) -> DuepiStoveState:
+        """Parse the dashboard HTML to extract stove state.
 
-        _LOGGER.debug(
-            "Device block length: %d (full HTML: %d). Device ID found in HTML: %s",
-            len(block), len(html), self._device_id in html,
-        )
-        _LOGGER.debug("Device block first 500 chars: %s", block[:500])
+        The dpremoteiot.com dashboard embeds device data as JSON inside HTML
+        comments with HTML-encoded quotes (&#34;). We extract and parse that
+        JSON first; regex on rendered HTML is used as a fallback.
+        """
+        # Try JSON extraction first (most reliable)
+        device_json = self._extract_device_json(page_html)
+        if device_json:
+            settings = device_json.get("deviceCurrentSettings", {})
+            _LOGGER.debug("Parsed device JSON settings: %s", settings)
+
+            power_state = str(settings.get("powerState", "OFF")).upper()
+            return DuepiStoveState(
+                power_on=power_state == "ON",
+                status_text=settings.get("status"),
+                room_temperature=_safe_float(settings.get("roomTemperature")),
+                working_power=_safe_int(settings.get("settedPower")),
+                set_temperature=_safe_int(settings.get("settedTemperature")),
+                online=settings.get("isOnline"),
+            )
+
+        # Fallback: regex parsing on rendered HTML
+        _LOGGER.debug("JSON extraction failed, falling back to regex parsing")
+        block = self._extract_device_block(page_html)
 
         power_match = _RE_POWER_STATUS.search(block) or _RE_POWER_STATE.search(block)
         power_on = power_match.group(1).upper() == "ON" if power_match else False
@@ -308,20 +347,14 @@ class DuepiCloudClient:
         temp_match = _RE_ROOM_TEMP.search(block)
         room_temp = float(temp_match.group(1)) if temp_match else None
 
-        power_val_match = _RE_SETTED_POWER.search(block) or _RE_WORKING_POWER.search(block)
+        power_val_match = _RE_WORKING_POWER.search(block) or _RE_SETTED_POWER.search(block)
         working_power = int(power_val_match.group(1)) if power_val_match else None
 
-        temp_val_match = _RE_SETTED_TEMP.search(block) or _RE_SET_TEMP.search(block)
+        temp_val_match = _RE_SET_TEMP.search(block) or _RE_SETTED_TEMP.search(block)
         set_temp = int(temp_val_match.group(1)) if temp_val_match else None
 
         online_match = _RE_ONLINE.search(block)
         online = online_match.group(1).lower() == "online" if online_match else None
-
-        _LOGGER.debug(
-            "Parsed state: power=%s, status=%s, room_temp=%s, power_level=%s, "
-            "set_temp=%s, online=%s",
-            power_on, status_text, room_temp, working_power, set_temp, online,
-        )
 
         return DuepiStoveState(
             power_on=power_on,
@@ -332,10 +365,49 @@ class DuepiCloudClient:
             online=online,
         )
 
-    def _extract_device_block(self, html: str) -> str:
-        """Extract the HTML block for our device from the dashboard."""
-        match = self._device_block_re.search(html)
-        return match.group(0) if match else html
+    def _extract_device_json(self, page_html: str) -> dict | None:
+        """Extract device data from JSON embedded in HTML comments.
+
+        The dashboard contains comments like:
+        <!-- [{"_id":"...","univocalID":"...","deviceCurrentSettings":{...}}] -->
+        with quotes encoded as &#34;
+        """
+        # Find all HTML comments that contain our device ID
+        for comment_match in re.finditer(r"<!--(.*?)-->", page_html, re.DOTALL):
+            comment = comment_match.group(1).strip()
+            if self._device_id not in comment:
+                continue
+
+            # Decode HTML entities (&#34; -> ")
+            decoded = html.unescape(comment)
+
+            try:
+                data = json.loads(decoded)
+            except (json.JSONDecodeError, ValueError):
+                _LOGGER.debug("Found device ID in comment but JSON parse failed")
+                continue
+
+            # data is a list of devices
+            if isinstance(data, list):
+                for device in data:
+                    if not isinstance(device, dict):
+                        continue
+                    if (
+                        device.get("_id") == self._device_id
+                        or device.get("univocalID") == self._device_id
+                    ):
+                        _LOGGER.debug("Found device JSON for %s", self._device_id)
+                        return device
+            elif isinstance(data, dict):
+                return data
+
+        _LOGGER.debug("No JSON comment found for device %s", self._device_id)
+        return None
+
+    def _extract_device_block(self, page_html: str) -> str:
+        """Extract the HTML block for our device from the dashboard (regex fallback)."""
+        match = self._device_block_re.search(page_html)
+        return match.group(0) if match else page_html
 
     @staticmethod
     def _extract_csrf(html: str) -> str | None:
