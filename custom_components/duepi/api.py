@@ -41,6 +41,7 @@ _RE_WORKING_POWER = re.compile(r'Working Power.*?<input[^>]*value="(\d+)"', re.D
 _RE_SETTED_TEMP = re.compile(r'settedTemperature.*?value="(\d+)"', re.DOTALL | re.IGNORECASE)
 _RE_SET_TEMP = re.compile(r'Set Temperature.*?<input[^>]*value="(\d+)"', re.DOTALL | re.IGNORECASE)
 _RE_ONLINE = re.compile(r"Status\s*:?\s*<[^>]*>(Online|Offline)", re.IGNORECASE)
+_RE_DEVICE_ID = re.compile(r'deviceid[=\s"\']+([a-f0-9]{24})', re.IGNORECASE)
 _RE_CSRF_INPUT = re.compile(r'<input[^>]*name=["\']_csrf["\'][^>]*value=["\']([^"\']+)["\']', re.IGNORECASE)
 _RE_CSRF_INPUT_ALT = re.compile(r'<input[^>]*value=["\']([^"\']+)["\'][^>]*name=["\']_csrf["\']', re.IGNORECASE)
 _RE_CSRF_META = re.compile(r'<meta[^>]*name=["\']csrf-token["\'][^>]*content=["\']([^"\']+)["\']', re.IGNORECASE)
@@ -90,6 +91,7 @@ class DuepiCloudClient:
         self._device_id = device_id
         self._authenticated = False
         self._auth_lock = asyncio.Lock()
+        self._api_device_id: str | None = None  # MongoDB ObjectId, resolved from dashboard
         self._device_block_re = re.compile(
             rf"{re.escape(device_id)}.*?(?=deviceid=|$)", re.DOTALL
         )
@@ -248,8 +250,9 @@ class DuepiCloudClient:
         """Send a control command to the stove."""
         await self._ensure_auth()
 
+        effective_id = self._api_device_id or self._device_id
         data = {
-            "deviceid": self._device_id,
+            "deviceid": effective_id,
             "active": "1" if active else "0",
             "emailNotifications": "0",
             "settedPower": str(power if power is not None else DEFAULT_POWER),
@@ -303,6 +306,12 @@ class DuepiCloudClient:
     def _parse_dashboard(self, html: str) -> DuepiStoveState:
         """Parse the dashboard HTML to extract stove state."""
         block = self._extract_device_block(html)
+
+        # Extract the MongoDB ObjectId used by the API for commands
+        device_id_match = _RE_DEVICE_ID.search(block)
+        if device_id_match:
+            self._api_device_id = device_id_match.group(1)
+            _LOGGER.debug("Resolved API device ID: %s", self._api_device_id)
 
         power_match = _RE_POWER_STATUS.search(block) or _RE_POWER_STATE.search(block)
         power_on = power_match.group(1).upper() == "ON" if power_match else False
