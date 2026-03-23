@@ -339,6 +339,13 @@ class DuepiCloudClient:
         # Try JSON extraction first (most reliable)
         device_json = self._extract_device_json(page_html)
         if device_json:
+            # Resolve the MongoDB ObjectId for API commands
+            if not self._api_device_id:
+                api_id = device_json.get("_id")
+                if api_id:
+                    self._api_device_id = api_id
+                    _LOGGER.debug("Resolved API device ID from JSON: %s", api_id)
+
             settings = device_json.get("deviceCurrentSettings", {})
             _LOGGER.debug("Parsed device JSON settings: %s", settings)
 
@@ -354,13 +361,20 @@ class DuepiCloudClient:
 
         # Fallback: regex parsing on rendered HTML
         _LOGGER.debug("JSON extraction failed, falling back to regex parsing")
-        block = self._extract_device_block(page_html)
 
-        # Extract the MongoDB ObjectId used by the API for commands
-        device_id_match = _RE_DEVICE_ID.search(block)
-        if device_id_match:
-            self._api_device_id = device_id_match.group(1)
-            _LOGGER.debug("Resolved API device ID: %s", self._api_device_id)
+        # Extract the MongoDB ObjectId that precedes our short device ID
+        if not self._api_device_id:
+            api_id_match = re.search(
+                rf'deviceid=([a-f0-9]{{24}})(?:(?!deviceid=).)*?{re.escape(self._device_id)}',
+                page_html, re.DOTALL | re.IGNORECASE,
+            )
+            if api_id_match:
+                self._api_device_id = api_id_match.group(1)
+                _LOGGER.debug("Resolved API device ID from HTML: %s", self._api_device_id)
+            else:
+                _LOGGER.warning("Could not resolve API device ID from dashboard")
+
+        block = self._extract_device_block(page_html)
 
         power_match = _RE_POWER_STATUS.search(block) or _RE_POWER_STATE.search(block)
         power_on = power_match.group(1).upper() == "ON" if power_match else False
