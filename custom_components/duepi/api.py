@@ -305,13 +305,20 @@ class DuepiCloudClient:
 
     def _parse_dashboard(self, html: str) -> DuepiStoveState:
         """Parse the dashboard HTML to extract stove state."""
-        block = self._extract_device_block(html)
+        # Extract the MongoDB ObjectId that precedes our short device ID
+        # HTML structure: ...deviceid=<objectid>...<short_id>...deviceid=<next>...
+        if not self._api_device_id:
+            api_id_match = re.search(
+                rf'deviceid=([a-f0-9]{{24}})(?:(?!deviceid=).)*?{re.escape(self._device_id)}',
+                html, re.DOTALL | re.IGNORECASE,
+            )
+            if api_id_match:
+                self._api_device_id = api_id_match.group(1)
+                _LOGGER.debug("Resolved API device ID: %s", self._api_device_id)
+            else:
+                _LOGGER.warning("Could not resolve API device ID from dashboard HTML")
 
-        # Extract the MongoDB ObjectId used by the API for commands
-        device_id_match = _RE_DEVICE_ID.search(block)
-        if device_id_match:
-            self._api_device_id = device_id_match.group(1)
-            _LOGGER.debug("Resolved API device ID: %s", self._api_device_id)
+        block = self._extract_device_block(html)
 
         power_match = _RE_POWER_STATUS.search(block) or _RE_POWER_STATE.search(block)
         power_on = power_match.group(1).upper() == "ON" if power_match else False
