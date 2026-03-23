@@ -147,7 +147,11 @@ class DuepiCloudClient:
                             return True
 
                 self._authenticated = False
-                _LOGGER.warning("Login failed: invalid credentials or unexpected response")
+                _LOGGER.warning(
+                    "Login failed: status=%d, location=%s",
+                    resp.status,
+                    resp.headers.get("Location", "none"),
+                )
                 return False
 
             except (aiohttp.ClientError, asyncio.TimeoutError) as err:
@@ -289,6 +293,12 @@ class DuepiCloudClient:
         """Parse the dashboard HTML to extract stove state."""
         block = self._extract_device_block(html)
 
+        _LOGGER.debug(
+            "Device block length: %d (full HTML: %d). Device ID found in HTML: %s",
+            len(block), len(html), self._device_id in html,
+        )
+        _LOGGER.debug("Device block first 500 chars: %s", block[:500])
+
         power_match = _RE_POWER_STATUS.search(block) or _RE_POWER_STATE.search(block)
         power_on = power_match.group(1).upper() == "ON" if power_match else False
 
@@ -306,6 +316,12 @@ class DuepiCloudClient:
 
         online_match = _RE_ONLINE.search(block)
         online = online_match.group(1).lower() == "online" if online_match else None
+
+        _LOGGER.debug(
+            "Parsed state: power=%s, status=%s, room_temp=%s, power_level=%s, "
+            "set_temp=%s, online=%s",
+            power_on, status_text, room_temp, working_power, set_temp, online,
+        )
 
         return DuepiStoveState(
             power_on=power_on,
