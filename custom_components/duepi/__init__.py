@@ -28,6 +28,8 @@ type DuepiConfigEntry = ConfigEntry[DuepiCoordinator]
 
 async def async_setup_entry(hass: HomeAssistant, entry: DuepiConfigEntry) -> bool:
     """Set up Duepi Pellet Stove from a config entry."""
+    _LOGGER.debug("Setting up Duepi integration for device %s", entry.data[CONF_DEVICE_ID])
+
     # Create a dedicated cookie jar for this integration instance
     jar = aiohttp.CookieJar(unsafe=True)
     session = aiohttp.ClientSession(cookie_jar=jar)
@@ -40,7 +42,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: DuepiConfigEntry) -> boo
     )
 
     # Initial login
+    _LOGGER.debug("Logging in to dpremoteiot.com")
     await client.async_login()
+    _LOGGER.debug("Login successful")
 
     scan_interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
     coordinator = DuepiCoordinator(
@@ -49,7 +53,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: DuepiConfigEntry) -> boo
         update_interval=timedelta(seconds=scan_interval),
     )
 
+    _LOGGER.debug("Running first data refresh (interval=%ss)", scan_interval)
     await coordinator.async_config_entry_first_refresh()
+    _LOGGER.info("Duepi integration ready for device %s", entry.data[CONF_DEVICE_ID])
 
     entry.runtime_data = coordinator
 
