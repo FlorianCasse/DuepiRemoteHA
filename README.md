@@ -97,7 +97,7 @@ Before adding the integration, you need your **Device ID** from dpremoteiot.com:
 
 | Option | Default | Description |
 |---|---|---|
-| Update interval | 120s | How often to poll the stove state (min: 30s) |
+| Update interval | 30s | How often to poll the stove state (min: 30s) |
 | Default power | 5 | Power level used when turning on (1-5) |
 | Default temperature | 25°C | Temperature used when turning on (0-35°C) |
 
