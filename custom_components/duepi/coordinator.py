@@ -40,6 +40,8 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
             update_interval=update_interval,
         )
         self.client = client
+        self._desired_power: int | None = None
+        self._was_heating: bool = False
 
     async def _async_update_data(self) -> DuepiStoveState:
         """Fetch stove state from dpremoteiot.com."""
@@ -54,6 +56,26 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
                 state.set_temperature,
                 state.working_power,
             )
+
+            # Detect transition to nominal heating and enforce desired power
+            is_heating = bool(
+                state.status_text and "heating" in state.status_text.lower()
+            )
+            if is_heating and not self._was_heating:
+                if (
+                    self._desired_power is not None
+                    and state.working_power != self._desired_power
+                ):
+                    _LOGGER.info(
+                        "Stove reached nominal heating — enforcing desired power %d (reported %d)",
+                        self._desired_power,
+                        state.working_power,
+                    )
+                    self.hass.async_create_task(
+                        self._async_enforce_power(self._desired_power)
+                    )
+            self._was_heating = is_heating
+
             return state
         except DuepiAuthError as err:
             raise ConfigEntryAuthFailed(
@@ -69,6 +91,7 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         state = self.data
         power = state.working_power if state else DEFAULT_POWER
         temperature = state.set_temperature if state else DEFAULT_TEMPERATURE
+        self._desired_power = power
         _LOGGER.info("Turning stove ON (power=%d, temp=%d)", power, temperature)
         await self.client.async_turn_on(power=power, temperature=temperature)
         if state:
@@ -102,6 +125,7 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
 
     async def async_set_power(self, power: int) -> None:
         """Set working power and refresh."""
+        self._desired_power = power
         _LOGGER.info("Setting stove power to %d", power)
         await self.client.async_set_power(power, current_state=self.data)
         state = self.data
@@ -133,3 +157,8 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
                     online=state.online,
                 )
             )
+
+    async def _async_enforce_power(self, power: int) -> None:
+        """Re-send desired power after stove reaches nominal heating."""
+        await self.client.async_set_power(power, current_state=self.data)
+        await self.async_request_refresh()
