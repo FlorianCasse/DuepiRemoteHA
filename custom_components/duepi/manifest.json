@@ -1,7 +1,7 @@
 {
   "domain": "duepi",
   "name": "Duepi Pellet Stove",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "config_flow": true,
   "documentation": "https://github.com/FlorianCasse/DuepiRemoteHA",
   "issue_tracker": "https://github.com/FlorianCasse/DuepiRemoteHA/issues",
