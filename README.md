@@ -55,7 +55,7 @@ Use this method if you don't want to use HACS.
            ├── climate.py
            ├── ...
    ```
-   > **Tip:** The HA config directory is typically `/config/` if you use Home Assistant OS/Supervised, or `~/.homeassistant/` for Core installations.
+   > **Tip:** The HA config directory is `/homeassistant/` on Home Assistant OS 17+, `/config/` on older HA OS/Supervised, or `~/.homeassistant/` for Core installations.
 3. **Restart Home Assistant** (Settings → System → Restart).
 
 ## Setup
@@ -260,8 +260,26 @@ If you prefer to migrate manually without the script:
 
 The old script files are preserved in the `legacy/` folder of this repository for reference.
 
+## Troubleshooting
+
+To enable debug logs, add the following to your `configuration.yaml`:
+
+```yaml
+logger:
+  default: warning
+  logs:
+    custom_components.duepi: debug
+```
+
+Restart Home Assistant and view the logs:
+
+- **From the HA OS terminal:** `docker logs homeassistant 2>&1 | grep -i duepi`
+- **From Studio Code Server / File Editor:** open the `home-assistant.log` file
+
+> **Note:** The **Settings → System → Logs** page only shows warnings and errors. Debug/info logs are only visible in the full log file or via `docker logs`.
+
 ## Known Limitations
 
-- **Power level may be ignored** — some users report that dpremoteiot.com always starts the stove at power 3 regardless of `settedPower`. This is a server-side limitation, not a bug in this integration.
+- **Power level may be ignored on startup** — some stove models always start at a fixed power level regardless of the `settedPower` value. This is a stove firmware limitation, not a bug in this integration.
 - **Cloud dependency** — requires internet connectivity (communicates via dpremoteiot.com, not locally).
-- **HTML scraping** — state detection relies on parsing the dashboard HTML. If dpremoteiot.com changes their layout, the integration may need updating.
+- **HTML scraping fallback** — state detection primarily uses JSON data embedded in the dashboard HTML, with regex parsing as a fallback. If dpremoteiot.com changes their layout, the integration may need updating.
