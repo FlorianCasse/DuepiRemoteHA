@@ -10,8 +10,9 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 
-from .api import DuepiCloudClient
+from .api import DuepiAuthError, DuepiCloudClient, DuepiConnectionError
 from .const import (
     CONF_DEVICE_ID,
     CONF_SCAN_INTERVAL,
@@ -30,9 +31,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: DuepiConfigEntry) -> boo
     """Set up Duepi Pellet Stove from a config entry."""
     _LOGGER.debug("Setting up Duepi integration for device %s", entry.data[CONF_DEVICE_ID])
 
-    # Create a dedicated cookie jar for this integration instance
-    jar = aiohttp.CookieJar(unsafe=True)
-    session = aiohttp.ClientSession(cookie_jar=jar)
+    # Dedicated HTTP session (and cookie jar) for this integration instance
+    session = aiohttp.ClientSession()
 
     client = DuepiCloudClient(
         session=session,
@@ -41,20 +41,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: DuepiConfigEntry) -> boo
         device_id=entry.data[CONF_DEVICE_ID],
     )
 
-    # Initial login
-    _LOGGER.debug("Logging in to dpremoteiot.com")
-    await client.async_login()
-    _LOGGER.debug("Login successful")
+    try:
+        # Initial login
+        _LOGGER.debug("Logging in to dpremoteiot.com")
+        if not await client.async_login():
+            raise ConfigEntryAuthFailed("Login failed with provided credentials")
+        _LOGGER.debug("Login successful")
 
-    scan_interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
-    coordinator = DuepiCoordinator(
-        hass,
-        client,
-        update_interval=timedelta(seconds=scan_interval),
-    )
+        scan_interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+        coordinator = DuepiCoordinator(
+            hass,
+            client,
+            update_interval=timedelta(seconds=scan_interval),
+        )
 
-    _LOGGER.debug("Running first data refresh (interval=%ss)", scan_interval)
-    await coordinator.async_config_entry_first_refresh()
+        _LOGGER.debug("Running first data refresh (interval=%ss)", scan_interval)
+        await coordinator.async_config_entry_first_refresh()
+    except DuepiConnectionError as err:
+        await session.close()
+        raise ConfigEntryNotReady(f"Cannot connect to dpremoteiot.com: {err}") from err
+    except (DuepiAuthError, ConfigEntryAuthFailed):
+        await session.close()
+        raise
+    except Exception:
+        # Ensure the HTTP session is never leaked if setup fails for any reason
+        await session.close()
+        raise
+
     _LOGGER.info("Duepi integration ready for device %s", entry.data[CONF_DEVICE_ID])
 
     entry.runtime_data = coordinator

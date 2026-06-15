@@ -190,13 +190,13 @@ class DuepiCloudClient:
         await self._ensure_auth()
 
         try:
-            html = await self._fetch_dashboard()
+            page_html = await self._fetch_dashboard()
         except DuepiAuthError:
             self._authenticated = False
             await self._ensure_auth()
-            html = await self._fetch_dashboard()
+            page_html = await self._fetch_dashboard()
 
-        return self._parse_dashboard(html)
+        return self._parse_dashboard(page_html)
 
     async def async_turn_on(self, power: int | None = None, temperature: int | None = None) -> None:
         """Turn the stove on."""
@@ -253,19 +253,19 @@ class DuepiCloudClient:
                         headers=HEADERS,
                         timeout=TIMEOUT_DEFAULT,
                     ) as resp2:
-                        html = await resp2.text()
+                        page_html = await resp2.text()
                 else:
-                    html = await resp.text()
+                    page_html = await resp.text()
 
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             raise DuepiConnectionError(f"Cannot reach dpremoteiot.com: {err}") from err
 
-        html_lower = html[:2000].lower()
+        html_lower = page_html[:2000].lower()
         if "sign in" in html_lower or ("login" in html_lower and "<form" in html_lower):
             self._authenticated = False
             raise DuepiAuthError("Session expired (received login page)")
 
-        return html
+        return page_html
 
     async def _send_command(
         self,
@@ -277,7 +277,7 @@ class DuepiCloudClient:
         await self._ensure_auth()
 
         effective_id = self._api_device_id or self._device_id
-        _LOGGER.info(
+        _LOGGER.debug(
             "Sending command: api_device_id=%s, config_device_id=%s, effective_id=%s",
             self._api_device_id, self._device_id, effective_id,
         )
@@ -289,7 +289,7 @@ class DuepiCloudClient:
             "settedTemperature": str(temperature if temperature is not None else DEFAULT_TEMPERATURE),
             "switch": "on" if active else "off",
         }
-        _LOGGER.info("Command payload: %s", data)
+        _LOGGER.debug("Command payload: %s", data)
 
         last_err: Exception | None = None
         for attempt in range(3):
@@ -350,10 +350,10 @@ class DuepiCloudClient:
                 api_id = device_json.get("_id")
                 if api_id:
                     self._api_device_id = api_id
-                    _LOGGER.info("Resolved API device ID from JSON: %s", api_id)
+                    _LOGGER.debug("Resolved API device ID from JSON: %s", api_id)
 
             settings = device_json.get("deviceCurrentSettings", {})
-            _LOGGER.info("Parsed device JSON settings: %s", settings)
+            _LOGGER.debug("Parsed device JSON settings: %s", settings)
 
             power_state = str(settings.get("powerState", "OFF")).upper()
             return DuepiStoveState(
@@ -366,7 +366,7 @@ class DuepiCloudClient:
             )
 
         # Fallback: regex parsing on rendered HTML
-        _LOGGER.info("JSON extraction failed, falling back to regex parsing")
+        _LOGGER.debug("JSON extraction failed, falling back to regex parsing")
 
         # Extract the MongoDB ObjectId that precedes our short device ID
         if not self._api_device_id:
@@ -376,7 +376,7 @@ class DuepiCloudClient:
             )
             if api_id_match:
                 self._api_device_id = api_id_match.group(1)
-                _LOGGER.info("Resolved API device ID from HTML: %s", self._api_device_id)
+                _LOGGER.debug("Resolved API device ID from HTML: %s", self._api_device_id)
             else:
                 _LOGGER.warning("Could not resolve API device ID from dashboard")
 
@@ -454,10 +454,10 @@ class DuepiCloudClient:
         return match.group(0) if match else page_html
 
     @staticmethod
-    def _extract_csrf(html: str) -> str | None:
+    def _extract_csrf(login_html: str) -> str | None:
         """Extract a CSRF token from the login page HTML."""
         for pattern in (_RE_CSRF_INPUT, _RE_CSRF_INPUT_ALT, _RE_CSRF_META):
-            match = pattern.search(html)
+            match = pattern.search(login_html)
             if match:
                 return match.group(1)
         return None

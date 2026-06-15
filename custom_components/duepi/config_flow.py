@@ -23,6 +23,10 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TEMPERATURE,
     DOMAIN,
+    MAX_POWER,
+    MAX_TEMPERATURE,
+    MIN_POWER,
+    MIN_TEMPERATURE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -127,8 +131,7 @@ class DuepiConfigFlow(ConfigFlow, domain=DOMAIN):
         self, email: str, password: str, device_id: str
     ) -> str | None:
         """Validate credentials. Returns an error key or None on success."""
-        jar = aiohttp.CookieJar(unsafe=True)
-        session = aiohttp.ClientSession(cookie_jar=jar)
+        session = aiohttp.ClientSession()
         try:
             client = DuepiCloudClient(session, email, password, device_id)
             if not await client.async_login():
@@ -178,11 +181,14 @@ class DuepiOptionsFlow(OptionsFlow):
                     vol.Optional(
                         CONF_DEFAULT_POWER,
                         default=options.get(CONF_DEFAULT_POWER, DEFAULT_POWER),
-                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=5)),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=MIN_POWER, max=MAX_POWER)),
                     vol.Optional(
                         CONF_DEFAULT_TEMPERATURE,
                         default=options.get(CONF_DEFAULT_TEMPERATURE, DEFAULT_TEMPERATURE),
-                    ): vol.All(vol.Coerce(int), vol.Range(min=5, max=90)),
+                    ): vol.All(
+                        vol.Coerce(int),
+                        vol.Range(min=MIN_TEMPERATURE, max=MAX_TEMPERATURE),
+                    ),
                 }
             ),
         )

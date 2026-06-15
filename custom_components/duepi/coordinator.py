@@ -49,7 +49,7 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         try:
             state = await self.client.async_get_stove_state()
             _LOGGER.debug(
-                "Stove state: on=%s, status=%s, room=%.1f°C, set=%d°C, power=%d",
+                "Stove state: on=%s, status=%s, room=%s°C, set=%s°C, power=%s",
                 state.power_on,
                 state.status_text,
                 state.room_temperature,
@@ -71,8 +71,10 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
                         self._desired_power,
                         state.working_power,
                     )
-                    self.hass.async_create_task(
-                        self._async_enforce_power(self._desired_power)
+                    self.config_entry.async_create_background_task(
+                        self.hass,
+                        self._async_enforce_power(self._desired_power),
+                        name=f"{DOMAIN}_enforce_power",
                     )
             self._was_heating = is_heating
 
