@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -87,28 +88,30 @@ class RemoteExecutor:
             return False
 
     def file_exists(self, path: str) -> bool:
-        return self._run(f"test -f {path} && echo yes || echo no").stdout.strip() == "yes"
+        q = shlex.quote(path)
+        return self._run(f"test -f {q} && echo yes || echo no").stdout.strip() == "yes"
 
     def dir_exists(self, path: str) -> bool:
-        return self._run(f"test -d {path} && echo yes || echo no").stdout.strip() == "yes"
+        q = shlex.quote(path)
+        return self._run(f"test -d {q} && echo yes || echo no").stdout.strip() == "yes"
 
     def read_file(self, path: str) -> str | None:
-        result = self._run(f"cat {path} 2>/dev/null")
+        result = self._run(f"cat {shlex.quote(path)} 2>/dev/null")
         if result.returncode != 0:
             return None
         return result.stdout
 
     def mkdir(self, path: str) -> None:
-        self._run(f"mkdir -p {path}")
+        self._run(f"mkdir -p {shlex.quote(path)}")
 
     def copy(self, src: str, dst: str) -> None:
-        self._run(f"cp -p {src} {dst}")
+        self._run(f"cp -p {shlex.quote(src)} {shlex.quote(dst)}")
 
     def remove(self, path: str) -> None:
-        self._run(f"rm -f {path}")
+        self._run(f"rm -f {shlex.quote(path)}")
 
     def remove_dir(self, path: str) -> None:
-        self._run(f"rm -rf {path}")
+        self._run(f"rm -rf {shlex.quote(path)}")
 
 
 class LocalExecutor:
