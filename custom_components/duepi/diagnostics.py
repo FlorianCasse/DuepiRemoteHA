@@ -9,10 +9,13 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_DEVICE_ID, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-from .coordinator import DuepiCoordinator
+from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+from .coordinator import DISCONNECT_GRACE_PERIOD, DuepiCoordinator
 
-TO_REDACT = {CONF_DEVICE_ID}
+
+def _safe_error_name(error: BaseException | None) -> str | None:
+    """Return an error category without exposing error details."""
+    return type(error).__name__ if error is not None else None
 
 
 async def async_get_config_entry_diagnostics(
@@ -20,17 +23,33 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     coordinator: DuepiCoordinator = entry.runtime_data
+    last_successful_update = coordinator.last_successful_update_time
+    elapsed = coordinator.disconnect_elapsed_seconds
 
     return {
         "config": async_redact_data(
             {
-                CONF_DEVICE_ID: entry.data.get(CONF_DEVICE_ID),
                 "scan_interval": entry.options.get(
                     CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
                 ),
+                **entry.data,
             },
-            TO_REDACT,
+            set(entry.data),
         ),
         "state": asdict(coordinator.data) if coordinator.data else None,
         "last_update_success": coordinator.last_update_success,
+        "last_successful_update": (
+            last_successful_update.isoformat()
+            if hasattr(last_successful_update, "isoformat")
+            else last_successful_update
+        ),
+        "last_error": _safe_error_name(
+            getattr(coordinator, "last_exception", None)
+        ),
+        "connectivity": {
+            "raw_online": coordinator.raw_online,
+            "filtered_online": coordinator.filtered_online,
+            "disconnect_elapsed_seconds": elapsed,
+            "grace_period_seconds": DISCONNECT_GRACE_PERIOD,
+        },
     }

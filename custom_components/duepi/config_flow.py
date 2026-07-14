@@ -13,7 +13,15 @@ from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
-from .api import DuepiAuthError, DuepiCloudClient, DuepiConnectionError
+from .api import (
+    DuepiAuthError,
+    DuepiCloudClient,
+    DuepiConnectionError,
+    DuepiParseError,
+    DuepiRateLimitError,
+    DuepiServerError,
+    DuepiTransportError,
+)
 from .const import (
     CONF_DEFAULT_POWER,
     CONF_DEFAULT_TEMPERATURE,
@@ -136,16 +144,21 @@ class DuepiConfigFlow(ConfigFlow, domain=DOMAIN):
             client = DuepiCloudClient(session, email, password, device_id)
             if not await client.async_login():
                 return "invalid_auth"
-            # Verify the device exists on the dashboard
-            state = await client.async_get_stove_state()
-            if state.room_temperature is None and state.status_text is None and not state.power_on:
-                _LOGGER.warning("Device %s may not exist on dashboard", device_id)
-                # Don't fail — the device might just be offline
+            # Verify the configured device exists and has current settings.
+            await client.async_get_stove_state()
             return None
         except DuepiAuthError:
             return "invalid_auth"
-        except DuepiConnectionError:
+        except DuepiParseError:
+            return "invalid_device"
+        except DuepiTransportError:
             return "cannot_connect"
+        except DuepiServerError:
+            return "server_error"
+        except DuepiRateLimitError:
+            return "rate_limited"
+        except DuepiConnectionError:
+            return "unknown"
         except Exception:
             _LOGGER.exception("Unexpected error during validation")
             return "unknown"

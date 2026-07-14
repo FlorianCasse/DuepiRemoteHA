@@ -22,7 +22,10 @@
     },
     "error": {
       "invalid_auth": "Invalid email or password.",
+      "invalid_device": "The configured device was not found or returned invalid data.",
       "cannot_connect": "Cannot connect to dpremoteiot.com.",
+      "server_error": "The dpremoteiot.com service is temporarily unavailable.",
+      "rate_limited": "Too many requests to dpremoteiot.com. Please try again later.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {

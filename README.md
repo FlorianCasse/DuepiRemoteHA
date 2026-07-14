@@ -17,7 +17,7 @@ Control a Duepi pellet stove from Home Assistant via the [dpremoteiot.com](https
 - A Duepi Remote Wifi module connected to your stove and registered on dpremoteiot.com.
   Examples: [poelediscount.com](https://www.poelediscount.com/modules-wifi-et-thermostats-connectes/3320-module-wifi-duepi-interstoves.html), [lafrancaisedupoele.fr](https://www.lafrancaisedupoele.fr/accueil/481-module-wi-fi-duepi.html)
 - An account on [dpremoteiot.com](https://dpremoteiot.com) with your stove added.
-- Home Assistant 2024.1.0 or later.
+- Home Assistant 2024.6.0 or later.
 
 ![Account and Device ID](screenshots/AccountAndDeviceID.png)
 
@@ -99,7 +99,7 @@ Before adding the integration, you need your **Device ID** from dpremoteiot.com:
 |---|---|---|
 | Update interval | 30s | How often to poll the stove state (min: 30s) |
 | Default power | 5 | Power level used when turning on (1-5) |
-| Default temperature | 25°C | Temperature used when turning on (0-35°C) |
+| Default temperature | 25°C | Temperature used when turning on (5-40°C) |
 
 ## Entities
 

@@ -11,13 +11,17 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .api import DuepiAuthError, DuepiCloudClient, DuepiConnectionError
 from .const import (
     CONF_DEVICE_ID,
+    CONF_DEFAULT_POWER,
+    CONF_DEFAULT_TEMPERATURE,
     CONF_SCAN_INTERVAL,
+    DEFAULT_POWER,
     DEFAULT_SCAN_INTERVAL,
-    DOMAIN,
+    DEFAULT_TEMPERATURE,
     PLATFORMS,
 )
 from .coordinator import DuepiCoordinator
@@ -29,10 +33,11 @@ type DuepiConfigEntry = ConfigEntry[DuepiCoordinator]
 
 async def async_setup_entry(hass: HomeAssistant, entry: DuepiConfigEntry) -> bool:
     """Set up Duepi Pellet Stove from a config entry."""
-    _LOGGER.debug("Setting up Duepi integration for device %s", entry.data[CONF_DEVICE_ID])
+    _LOGGER.debug("Setting up Duepi integration")
 
-    # Dedicated HTTP session (and cookie jar) for this integration instance
-    session = aiohttp.ClientSession()
+    # Home Assistant owns the session lifecycle. A dedicated cookie jar prevents
+    # account cookies for this cloud service leaking into another integration.
+    session = async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar())
 
     client = DuepiCloudClient(
         session=session,
@@ -51,24 +56,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: DuepiConfigEntry) -> boo
         scan_interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
         coordinator = DuepiCoordinator(
             hass,
+            entry,
             client,
             update_interval=timedelta(seconds=scan_interval),
+            default_power=entry.options.get(CONF_DEFAULT_POWER, DEFAULT_POWER),
+            default_temperature=entry.options.get(
+                CONF_DEFAULT_TEMPERATURE, DEFAULT_TEMPERATURE
+            ),
         )
 
         _LOGGER.debug("Running first data refresh (interval=%ss)", scan_interval)
         await coordinator.async_config_entry_first_refresh()
     except DuepiConnectionError as err:
-        await session.close()
         raise ConfigEntryNotReady(f"Cannot connect to dpremoteiot.com: {err}") from err
     except (DuepiAuthError, ConfigEntryAuthFailed):
-        await session.close()
         raise
     except Exception:
-        # Ensure the HTTP session is never leaked if setup fails for any reason
-        await session.close()
         raise
 
-    _LOGGER.info("Duepi integration ready for device %s", entry.data[CONF_DEVICE_ID])
+    _LOGGER.info("Duepi integration ready")
 
     entry.runtime_data = coordinator
 
@@ -86,7 +92,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: DuepiConfigEntry) -> bo
 
     if unload_ok:
         coordinator: DuepiCoordinator = entry.runtime_data
-        await coordinator.client.async_close()
+        coordinator.async_cancel_disconnect_grace()
 
     return unload_ok
 
