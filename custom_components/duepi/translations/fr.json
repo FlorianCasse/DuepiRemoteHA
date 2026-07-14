@@ -22,7 +22,10 @@
     },
     "error": {
       "invalid_auth": "Email ou mot de passe invalide.",
+      "invalid_device": "L'appareil configuré est introuvable ou renvoie des données invalides.",
       "cannot_connect": "Impossible de se connecter à dpremoteiot.com.",
+      "server_error": "Le service dpremoteiot.com est temporairement indisponible.",
+      "rate_limited": "Trop de requêtes vers dpremoteiot.com. Veuillez réessayer plus tard.",
       "unknown": "Une erreur inattendue s'est produite."
     },
     "abort": {

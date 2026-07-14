@@ -23,7 +23,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import shlex
 import shutil
@@ -60,6 +59,11 @@ def print_err(msg: str) -> None:
 # SSH remote execution layer
 # ---------------------------------------------------------------------------
 
+
+class MigrationCommandError(RuntimeError):
+    """An operation on the Home Assistant host could not be completed."""
+
+
 class RemoteExecutor:
     """Execute file operations on a remote HA instance via SSH."""
 
@@ -73,19 +77,33 @@ class RemoteExecutor:
         self._base_cmd.append(ssh_host)
 
     def _run(self, cmd: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [*self._base_cmd, cmd],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        try:
+            result = subprocess.run(
+                [*self._base_cmd, cmd],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired as err:
+            raise MigrationCommandError(
+                f"Remote command timed out after 30s on {self._host}: {cmd}"
+            ) from err
+        except OSError as err:
+            raise MigrationCommandError(
+                f"Could not run remote command on {self._host}: {cmd} ({err})"
+            ) from err
+
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            message = f"Remote command failed on {self._host} (exit {result.returncode}): {cmd}"
+            if detail:
+                message += f" — {detail}"
+            raise MigrationCommandError(message)
+        return result
 
     def test_connection(self) -> bool:
-        try:
-            result = self._run("echo ok")
-            return result.returncode == 0 and "ok" in result.stdout
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            return False
+        result = self._run("echo ok")
+        return "ok" in result.stdout
 
     def file_exists(self, path: str) -> bool:
         q = shlex.quote(path)
@@ -96,10 +114,9 @@ class RemoteExecutor:
         return self._run(f"test -d {q} && echo yes || echo no").stdout.strip() == "yes"
 
     def read_file(self, path: str) -> str | None:
-        result = self._run(f"cat {shlex.quote(path)} 2>/dev/null")
-        if result.returncode != 0:
+        if not self.file_exists(path):
             return None
-        return result.stdout
+        return self._run(f"cat {shlex.quote(path)}").stdout
 
     def mkdir(self, path: str) -> None:
         self._run(f"mkdir -p {shlex.quote(path)}")
@@ -226,10 +243,10 @@ def run_rollback(executor: LocalExecutor | RemoteExecutor, ha_config: str, inter
 
     proceed = True
     if interactive:
-        print(f"\n  This will:")
+        print("\n  This will:")
         print(f"    - Restore stoveOnOff.py and .env to {scripts_dir}/")
         print(f"    - Remove the custom integration at {integration_dir}/")
-        print(f"    - Remove the backup directory")
+        print("    - Remove the backup directory")
         answer = input(f"\n  {BOLD}Proceed with rollback? [y/N]{RESET} ").strip().lower()
         proceed = answer in ("y", "yes")
 
@@ -239,12 +256,23 @@ def run_rollback(executor: LocalExecutor | RemoteExecutor, ha_config: str, inter
 
     executor.mkdir(scripts_dir)
 
+    restore_pairs: list[tuple[str, str]] = []
     for filename in ["stoveOnOff.py", ".env"]:
         src = f"{backup_dir}/{filename}"
         dst = f"{scripts_dir}/{filename}"
         if executor.file_exists(src):
             executor.copy(src, dst)
+            restore_pairs.append((src, dst))
             print_ok(f"Restored: {src} → {dst}")
+
+    for src, dst in restore_pairs:
+        backup_content = executor.read_file(src)
+        restored_content = executor.read_file(dst)
+        if backup_content is None or restored_content != backup_content:
+            print_err(f"Restore verification failed for {dst}; rollback aborted.")
+            print_warn("The custom integration and migration backup have been kept intact.")
+            return
+        print_ok(f"Verified restore: {dst}")
 
     # --- Step 3: Remove new integration ---
     print_step(3, "Removing new custom integration")
@@ -374,12 +402,15 @@ def run_migration(executor: LocalExecutor | RemoteExecutor, ha_config: str, inte
     # --- Step 4: Check new integration ---
     print_step(4, "Checking new custom integration")
 
-    if executor.file_exists(integration_init):
+    integration_installed = executor.file_exists(integration_init)
+    if integration_installed:
         print_ok("New integration already installed at custom_components/duepi/")
     else:
         print_err("New integration NOT found at custom_components/duepi/")
         print_warn("Install it first via HACS or manually before continuing.")
         print_warn("See: https://github.com/FlorianCasse/DuepiRemoteHA#installation")
+        print_warn("Migration aborted; existing legacy files have not been changed.")
+        return
 
     # --- Step 5: Backup & cleanup ---
     print_step(5, "Backup and cleanup")
@@ -401,17 +432,27 @@ def run_migration(executor: LocalExecutor | RemoteExecutor, ha_config: str, inte
         if proceed:
             executor.mkdir(backup_dir)
 
+            backup_pairs: list[tuple[str, str]] = []
             for src in [old_script, old_env]:
                 if executor.file_exists(src):
                     filename = src.rsplit("/", 1)[-1]
                     dst = f"{backup_dir}/{filename}"
                     executor.copy(src, dst)
+                    backup_pairs.append((src, dst))
                     print_ok(f"Backed up: {src} → {dst}")
 
-            for src in [old_script, old_env]:
-                if executor.file_exists(src):
-                    executor.remove(src)
-                    print_ok(f"Removed: {src}")
+            for src, dst in backup_pairs:
+                source_content = executor.read_file(src)
+                backup_content = executor.read_file(dst)
+                if source_content is None or backup_content != source_content:
+                    print_err(f"Backup verification failed for {src}; migration aborted.")
+                    print_warn("No legacy files were removed. Fix the backup issue and try again.")
+                    return
+                print_ok(f"Verified backup: {dst}")
+
+            for src, _dst in backup_pairs:
+                executor.remove(src)
+                print_ok(f"Removed: {src}")
         else:
             print_warn("Skipped — you can clean up manually later.")
 
@@ -458,7 +499,7 @@ def run_migration(executor: LocalExecutor | RemoteExecutor, ha_config: str, inte
 
   6. {BOLD}Configure options{RESET} (optional):
      Settings → Devices & Services → Duepi Pellet Stove → Configure
-     - Update interval: default 120s (was 300s)
+     - Update interval: default 30s
      - Default power: {default_power}
      - Default temperature: {default_temp}°C
 """)
@@ -523,7 +564,12 @@ def main() -> None:
     if args.ssh:
         print(f"\n  Connecting to {BOLD}{args.ssh}{RESET} (port {args.port})...")
         executor = RemoteExecutor(args.ssh, args.port, args.key)
-        if not executor.test_connection():
+        try:
+            connected = executor.test_connection()
+        except MigrationCommandError as err:
+            print_err(str(err))
+            connected = False
+        if not connected:
             print_err(f"Cannot connect to {args.ssh} via SSH.")
             print_warn("Check that:")
             print_warn(f"  - The host is reachable: ssh {args.ssh}")
