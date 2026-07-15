@@ -115,6 +115,10 @@ All entities are grouped under a single **Duepi Pellet Stove** device:
 | Online | Binary sensor | Whether the stove is reachable via dpremoteiot.com |
 | Power level | Number | Slider to adjust power level (1-5) |
 
+The cloud can briefly report a healthy stove offline during its periodic heartbeat.
+The integration waits 120 seconds before publishing a disconnect, while restoring
+connectivity immediately on the next online report.
+
 ## Migration from Script-Based Setup
 
 If you were using the previous `stoveOnOff.py` + `command_line` setup, an interactive migration script is provided to guide you through the process.

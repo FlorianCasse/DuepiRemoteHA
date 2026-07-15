@@ -28,7 +28,10 @@ from .const import DEFAULT_POWER, DEFAULT_TEMPERATURE, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-DISCONNECT_GRACE_PERIOD = 60
+# The cloud periodically reports healthy stoves offline for 60-90 seconds.
+# Wait long enough to absorb that upstream heartbeat gap while still exposing
+# sustained disconnects promptly.
+DISCONNECT_GRACE_PERIOD = 120
 
 
 class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):

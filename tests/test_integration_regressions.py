@@ -172,7 +172,7 @@ def test_diagnostics_redacts_all_identifiers_and_exposes_connectivity_timing(
         "raw_online": False,
         "filtered_online": True,
         "disconnect_elapsed_seconds": 0,
-        "grace_period_seconds": 60,
+        "grace_period_seconds": 120,
     }
     assert result["last_successful_update"] == "2026-07-13T10:00:00+00:00"
     assert result["last_error"] == "RuntimeError"
