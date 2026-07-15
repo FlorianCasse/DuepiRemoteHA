@@ -73,10 +73,10 @@ def poll_states(
     return results
 
 
-def test_false_readings_within_grace_period_keep_stove_online(
+def test_observed_ninety_second_false_window_keeps_stove_online(
     monkeypatch: pytest.MonkeyPatch, duepi_test_modules: SimpleNamespace
 ) -> None:
-    """A transient offline report after a connected report must not flap availability."""
+    """The periodic 60-90 second cloud false window must not flap availability."""
     results = poll_states(
         monkeypatch,
         duepi_test_modules,
@@ -84,19 +84,26 @@ def test_false_readings_within_grace_period_keep_stove_online(
             stove_state(duepi_test_modules.api, True),
             stove_state(duepi_test_modules.api, False),
             stove_state(duepi_test_modules.api, False),
+            stove_state(duepi_test_modules.api, False),
             stove_state(duepi_test_modules.api, True),
         ],
-        [0, 1, 30, 31],
+        [0, 1, 31, 61, 91],
     )
 
-    assert [state.online for state in results] == [True, True, True, True]
-    assert [state.raw_online for state in results] == [True, False, False, True]
+    assert [state.online for state in results] == [True, True, True, True, True]
+    assert [state.raw_online for state in results] == [
+        True,
+        False,
+        False,
+        False,
+        True,
+    ]
 
 
-def test_continuous_offline_for_sixty_seconds_confirms_disconnect(
+def test_continuous_offline_for_two_minutes_confirms_disconnect(
     monkeypatch: pytest.MonkeyPatch, duepi_test_modules: SimpleNamespace
 ) -> None:
-    """A continuous raw offline period becomes published offline at 60 seconds."""
+    """A continuous raw offline period becomes published offline at 120 seconds."""
     results = poll_states(
         monkeypatch,
         duepi_test_modules,
@@ -106,7 +113,7 @@ def test_continuous_offline_for_sixty_seconds_confirms_disconnect(
             stove_state(duepi_test_modules.api, False),
             stove_state(duepi_test_modules.api, False),
         ],
-        [0, 1, 30, 61],
+        [0, 1, 61, 121],
     )
 
     assert [state.online for state in results] == [True, True, True, False]
@@ -129,7 +136,7 @@ def test_offline_is_published_at_grace_deadline_without_another_poll(
     assert [state.online for state in results] == [True, True]
     assert len(duepi_test_modules.scheduler.calls) == 1
     delayed_call = duepi_test_modules.scheduler.calls[0]
-    assert delayed_call.delay == 60
+    assert delayed_call.delay == 120
 
     duepi_test_modules.scheduler.fire(delayed_call)
 
@@ -285,7 +292,7 @@ def test_disconnect_confirmation_is_logged_once_when_polling_resumes(
     clock["now"] = 1
     coordinator.async_set_updated_data(asyncio.run(coordinator._async_update_data()))
     duepi_test_modules.scheduler.fire(duepi_test_modules.scheduler.calls[0])
-    clock["now"] = 90
+    clock["now"] = 121
     coordinator.async_set_updated_data(asyncio.run(coordinator._async_update_data()))
 
     assert coordinator.data.online is False
@@ -319,7 +326,7 @@ def test_raw_online_restores_connectivity_immediately(
             stove_state(duepi_test_modules.api, True),
             stove_state(duepi_test_modules.api, False),
         ],
-        [0, 1, 61, 62, 63],
+        [0, 1, 121, 122, 123],
     )
 
     assert [state.online for state in results] == [True, True, False, True, True]
@@ -343,7 +350,7 @@ def test_unknown_report_does_not_hide_a_later_reconnect(
             stove_state(duepi_test_modules.api, None),
             stove_state(duepi_test_modules.api, True),
         ],
-        [0, 1, 61, 62, 63],
+        [0, 1, 121, 122, 123],
     )
 
     assert [state.online for state in results] == [True, True, False, None, True]
