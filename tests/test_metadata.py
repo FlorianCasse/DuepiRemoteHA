@@ -76,5 +76,13 @@ def test_release_workflow_builds_a_rooted_hacs_archive() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text()
     assert "working-directory: custom_components/duepi" in workflow
     assert "softprops/action-gh-release@v3" in workflow
+    assert "generate_release_notes: true" in workflow
     assert "grep -qx \"manifest.json\"" in workflow
     assert "grep -q '^custom_components/'" in workflow
+
+
+def test_readme_displays_the_local_brand_icon() -> None:
+    """Repository visitors can see the original integration branding."""
+    readme = (ROOT / "README.md").read_text()
+    assert 'src="custom_components/duepi/brand/icon.png"' in readme
+    assert 'alt="Duepi pellet stove icon"' in readme

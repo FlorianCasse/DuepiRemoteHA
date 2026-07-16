@@ -1,5 +1,9 @@
 # DuepiRemoteHA
 
+<p align="center">
+  <img src="custom_components/duepi/brand/icon.png" alt="Duepi pellet stove icon" width="160">
+</p>
+
 Control a Duepi pellet stove from Home Assistant via the [dpremoteiot.com](https://dpremoteiot.com) cloud API.
 
 ## Features
