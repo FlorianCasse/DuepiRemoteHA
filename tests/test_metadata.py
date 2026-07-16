@@ -41,7 +41,7 @@ def test_release_metadata_is_consistent() -> None:
     """Manifest and HACS metadata agree on the v1.3 release contract."""
     manifest = _load_json(INTEGRATION / "manifest.json")
     hacs = _load_json(ROOT / "hacs.json")
-    assert manifest["version"] == "1.3.0"
+    assert manifest["version"] == "1.3.1"
     assert hacs["zip_release"] is True
     assert hacs["filename"] == "duepi.zip"
 
