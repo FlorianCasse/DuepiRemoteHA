@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches manifest version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          tag_version = os.environ["RELEASE_TAG"].removeprefix("v")
+          manifest = json.loads(
+              Path("custom_components/duepi/manifest.json").read_text()
+          )
+          manifest_version = manifest["version"]
+          if tag_version != manifest_version:
+              raise SystemExit(
+                  f"Tag version {tag_version} does not match manifest {manifest_version}"
+              )
+          PY
+
+      - name: Build HACS release archive
+        working-directory: custom_components/duepi
+        run: |
+          zip -r "$GITHUB_WORKSPACE/duepi.zip" . \
+            -x "__pycache__/*" "__pycache__/" \
+               "*/__pycache__/*" "*/__pycache__/" "*.pyc"
+
+      - name: Verify archive layout
+        run: |
+          unzip -Z1 duepi.zip | grep -qx "manifest.json"
+          if unzip -Z1 duepi.zip | grep -q '^custom_components/'; then
+            echo "Archive must contain integration files at its root" >&2
+            exit 1
+          fi
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: duepi.zip
+          fail_on_unmatched_files: true
+          generate_release_notes: true

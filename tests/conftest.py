@@ -23,12 +23,37 @@ class _ConfigEntry:
 class _ConfigFlow:
     """Minimal ConfigFlow base that accepts Home Assistant's domain keyword."""
 
+    def __init__(self) -> None:
+        self.hass = _HomeAssistant()
+        self._unique_id = None
+
     def __init_subclass__(cls, **_kwargs: object) -> None:
         super().__init_subclass__()
+
+    def async_show_form(self, **kwargs: object) -> dict[str, object]:
+        return {"type": "form", **kwargs}
+
+    def async_create_entry(self, **kwargs: object) -> dict[str, object]:
+        return {"type": "create_entry", **kwargs}
+
+    async def async_set_unique_id(self, unique_id: str) -> None:
+        self._unique_id = unique_id
+
+    def _abort_if_unique_id_configured(self) -> None:
+        return None
 
 
 class _OptionsFlow:
     """Minimal OptionsFlow base for importing the configuration module."""
+
+    def __init__(self, config_entry: object | None = None) -> None:
+        self.config_entry = config_entry or SimpleNamespace(options={})
+
+    def async_show_form(self, **kwargs: object) -> dict[str, object]:
+        return {"type": "form", **kwargs}
+
+    def async_create_entry(self, **kwargs: object) -> dict[str, object]:
+        return {"type": "create_entry", **kwargs}
 
 
 class _HomeAssistant:
@@ -160,6 +185,7 @@ def _install_voluptuous_stub(monkeypatch: pytest.MonkeyPatch) -> None:
     voluptuous.Optional = lambda value, **_kwargs: value
     voluptuous.All = lambda *values: values[-1]
     voluptuous.Coerce = lambda value: value
+    voluptuous.In = lambda value: value
     voluptuous.Range = lambda **_kwargs: (lambda value: value)
     monkeypatch.setitem(sys.modules, "voluptuous", voluptuous)
 

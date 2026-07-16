@@ -1,13 +1,19 @@
 # DuepiRemoteHA
 
+<p align="center">
+  <img src="custom_components/duepi/brand/icon.png" alt="Duepi pellet stove icon" width="160">
+</p>
+
 Control a Duepi pellet stove from Home Assistant via the [dpremoteiot.com](https://dpremoteiot.com) cloud API.
 
 ## Features
 
 - **Native Climate entity** — full HVAC control with temperature and power level, using the stove's built-in temperature sensor
 - **Auto-login** — authenticates with email/password, auto-renews the session when it expires (no more manual cookie extraction!)
+- **Automatic stove discovery** — sign in and select a stove without hunting for its device ID
 - **Config flow UI** — set up entirely from the Home Assistant UI (Settings → Add Integration)
-- **Rich entities** — climate, temperature sensor, power level, status text, online/offline connectivity, power slider
+- **Eco and Comfort presets** — switch temperature and power together from the climate entity
+- **Rich diagnostics** — alarms, problem state, last-seen time, operating hours, and estimated pellet use
 - **HACS compatible** — install easily via HACS custom repository
 - **Reauth flow** — automatically prompts for new credentials if authentication fails
 - **Diagnostics** — built-in diagnostic dump for troubleshooting
@@ -18,8 +24,6 @@ Control a Duepi pellet stove from Home Assistant via the [dpremoteiot.com](https
   Examples: [poelediscount.com](https://www.poelediscount.com/modules-wifi-et-thermostats-connectes/3320-module-wifi-duepi-interstoves.html), [lafrancaisedupoele.fr](https://www.lafrancaisedupoele.fr/accueil/481-module-wi-fi-duepi.html)
 - An account on [dpremoteiot.com](https://dpremoteiot.com) with your stove added.
 - Home Assistant 2024.6.0 or later.
-
-![Account and Device ID](screenshots/AccountAndDeviceID.png)
 
 ## Installation
 
@@ -62,35 +66,20 @@ Use this method if you don't want to use HACS.
 
 Once the integration is installed and HA has restarted:
 
-### Step 1 — Find your Device ID
-
-Before adding the integration, you need your **Device ID** from dpremoteiot.com:
-
-1. Log in to [dpremoteiot.com](https://dpremoteiot.com).
-2. On the dashboard, find your stove and look for the **delete device** button.
-3. Inspect the button's link — it contains `deviceid=YOUR_DEVICE_ID`.
-
-![Account and Device ID](screenshots/AccountAndDeviceID.png)
-
-### Step 2 — Add the integration
+### Step 1 — Add the integration
 
 1. Go to **Settings → Devices & Services**.
 2. Click **+ Add Integration** (bottom-right).
 3. Search for **Duepi Pellet Stove** and select it.
-4. Fill in the form:
+4. Enter your dpremoteiot.com email and password.
+5. Select the stove discovered on your account. Selection is shown even when the account contains only one stove.
+6. Click **Submit**. A new **Duepi Pellet Stove** device appears with all its entities.
 
-| Field | Description |
-|---|---|
-| **Email** | Your dpremoteiot.com account email |
-| **Password** | Your dpremoteiot.com account password |
-| **Device ID** | The device ID you found in Step 1 |
-
-5. Click **Submit**. The integration will validate your credentials by logging in to dpremoteiot.com.
-6. If successful, a new **Duepi Pellet Stove** device appears with all its entities.
+If the dashboard format prevents automatic discovery, the flow falls back to a manual **Device ID** field. Existing installations keep their current device ID and do not need to be reconfigured.
 
 > **Authentication failed?** Double-check your email and password. Make sure you can log in to [dpremoteiot.com](https://dpremoteiot.com) with the same credentials in a browser.
 
-### Step 3 — Configure options (optional)
+### Step 2 — Configure options (optional)
 
 1. Go to **Settings → Devices & Services → Duepi Pellet Stove**.
 2. Click **Configure**.
@@ -98,8 +87,14 @@ Before adding the integration, you need your **Device ID** from dpremoteiot.com:
 | Option | Default | Description |
 |---|---|---|
 | Update interval | 30s | How often to poll the stove state (min: 30s) |
-| Default power | 5 | Power level used when turning on (1-5) |
-| Default temperature | 25°C | Temperature used when turning on (5-40°C) |
+| Comfort/default power | 5 | Power level used for Comfort and normal turn-on (1-5) |
+| Comfort/default temperature | 25°C | Temperature used for Comfort and normal turn-on (5-40°C) |
+| Eco power | 1 | Power level used by the Eco preset (1-5) |
+| Eco temperature | 18°C | Temperature used by the Eco preset (5-40°C) |
+| Pellet rate at power 1 | 0.6 kg/h | Estimated minimum consumption rate (0-10 kg/h) |
+| Pellet rate at power 5 | 1.8 kg/h | Estimated maximum consumption rate (0-10 kg/h) |
+
+The minimum pellet rate must not exceed the maximum. Changing any option reloads the integration automatically.
 
 ## Entities
 
@@ -107,12 +102,17 @@ All entities are grouped under a single **Duepi Pellet Stove** device:
 
 | Entity | Type | Description |
 |---|---|---|
-| Duepi Pellet Stove | Climate | Main control — HVAC mode (heat/off), target temperature, fan mode (power 1-5) |
+| Duepi Pellet Stove | Climate | Main control — HVAC mode, target temperature, power 1-5, and Eco/Comfort presets |
 | Room temperature | Sensor | Current room temperature from the stove's built-in sensor (°C) |
 | Power level | Sensor | Current working power level (1-5) |
 | Status | Sensor | Status text (Heating, Idle, Standby, Off...) |
 | Set temperature | Sensor | Current target temperature (°C) |
 | Online | Binary sensor | Whether the stove is reachable via dpremoteiot.com |
+| Problem | Binary sensor | Active when an alarm field or alarm/error status is reported |
+| Alarm | Sensor | Cloud alarm text/code, disabled by default because fields vary by stove |
+| Last seen | Sensor | Last UTC time the cloud explicitly reported the stove online |
+| Operating hours | Sensor | Restored cumulative time while the stove is on |
+| Pellet consumption (estimated) | Sensor | Restored consumption estimate based on runtime and power, disabled by default |
 | Power level | Number | Slider to adjust power level (1-5) |
 
 The cloud can briefly report a healthy stove offline during its periodic heartbeat.
@@ -287,3 +287,4 @@ Restart Home Assistant and view the logs:
 - **Power level may be ignored on startup** — some stove models always start at a fixed power level regardless of the `settedPower` value. This is a stove firmware limitation, not a bug in this integration.
 - **Cloud dependency** — requires internet connectivity (communicates via dpremoteiot.com, not locally).
 - **HTML scraping fallback** — state detection primarily uses JSON data embedded in the dashboard HTML, with regex parsing as a fallback. If dpremoteiot.com changes their layout, the integration may need updating.
+- **Estimated pellet use** — consumption is calculated from configured rates and observed power, not measured by the stove. Gaps are capped to avoid counting through long outages or restarts.

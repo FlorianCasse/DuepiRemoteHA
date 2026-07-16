@@ -16,7 +16,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_DEVICE_ID, MAX_TEMPERATURE, MIN_POWER, MAX_POWER, MIN_TEMPERATURE
+from .const import (
+    CONF_DEVICE_ID,
+    MAX_POWER,
+    MAX_TEMPERATURE,
+    MIN_POWER,
+    MIN_TEMPERATURE,
+    PRESET_COMFORT,
+    PRESET_ECO,
+    PRESET_NONE,
+)
 from .coordinator import DuepiCoordinator
 from .device import build_device_info
 
@@ -44,11 +53,13 @@ class DuepiClimateEntity(CoordinatorEntity[DuepiCoordinator], ClimateEntity):
     _attr_max_temp = MAX_TEMPERATURE
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
     _attr_fan_modes = FAN_MODES
+    _attr_preset_modes = [PRESET_NONE, PRESET_ECO, PRESET_COMFORT]
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE
         | ClimateEntityFeature.FAN_MODE
         | ClimateEntityFeature.TURN_ON
         | ClimateEntityFeature.TURN_OFF
+        | ClimateEntityFeature.PRESET_MODE
     )
 
     def __init__(self, coordinator: DuepiCoordinator, entry: ConfigEntry) -> None:
@@ -109,6 +120,11 @@ class DuepiClimateEntity(CoordinatorEntity[DuepiCoordinator], ClimateEntity):
             return str(self.coordinator.data.working_power)
         return None
 
+    @property
+    def preset_mode(self) -> str:
+        """Return the current or pending preset."""
+        return self.coordinator.current_preset()
+
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set the HVAC mode (heat or off)."""
         if hvac_mode == HVACMode.HEAT:
@@ -125,6 +141,10 @@ class DuepiClimateEntity(CoordinatorEntity[DuepiCoordinator], ClimateEntity):
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         """Set the fan mode (power level 1-5)."""
         await self.coordinator.async_set_power(int(fan_mode))
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Apply or queue a climate preset."""
+        await self.coordinator.async_set_preset(preset_mode)
 
     async def async_turn_on(self) -> None:
         """Turn the stove on."""

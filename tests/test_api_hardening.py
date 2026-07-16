@@ -89,6 +89,11 @@ def dashboard(device_id: str = DEVICE_ID, *, online: object = "online") -> str:
     return f"<!-- {html.escape(json.dumps(payload), quote=False)} -->"
 
 
+def dashboard_devices(devices: list[dict[str, object]]) -> str:
+    """Return a dashboard comment containing the supplied devices."""
+    return f"<!-- {html.escape(json.dumps(devices), quote=False)} -->"
+
+
 def client(api: SimpleNamespace, session: FakeSession) -> object:
     """Build a client under test."""
     return api.DuepiCloudClient(session, "user@example.invalid", "secret", DEVICE_ID)
@@ -166,6 +171,107 @@ def test_wrong_device_id_never_fabricates_an_off_state(
         client(api, FakeSession([]))._parse_dashboard(dashboard("other-stove"))
 
 
+def test_state_parse_requires_a_selected_device(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """Discovery-only clients cannot accidentally parse or command a stove."""
+    api = duepi_test_modules.api
+    cloud_client = api.DuepiCloudClient(FakeSession([]), "user", "secret")
+
+    with pytest.raises(api.DuepiParseError, match="No device"):
+        cloud_client._parse_dashboard(dashboard())
+
+
+def test_list_devices_returns_named_deduplicated_summaries(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """Discovery preserves order, optional names, and the public identifier."""
+    api = duepi_test_modules.api
+    devices = [
+        {
+            "_id": "api-one",
+            "univocalID": "stove-one",
+            "name": "Living room",
+            "deviceCurrentSettings": {},
+        },
+        {
+            "_id": "api-two",
+            "univocalID": "stove-two",
+            "deviceName": "Kitchen",
+            "deviceCurrentSettings": {},
+        },
+        {
+            "_id": "duplicate-api",
+            "univocalID": "stove-one",
+            "deviceCurrentSettings": {},
+        },
+    ]
+    session = FakeSession([FakeResponse(200, dashboard_devices(devices))])
+    cloud_client = api.DuepiCloudClient(session, "user", "secret")
+    cloud_client._authenticated = True
+
+    result = asyncio.run(cloud_client.async_list_devices())
+
+    assert result == [
+        api.DuepiDeviceSummary("stove-one", "api-one", "Living room"),
+        api.DuepiDeviceSummary("stove-two", "api-two", "Kitchen"),
+    ]
+
+
+def test_list_devices_falls_back_to_api_id_and_skips_malformed_comments(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """Malformed comments and unrelated JSON do not break discovery."""
+    api = duepi_test_modules.api
+    page = """<!-- {broken json -->
+    <!-- {\"_id\": \"not-a-device\"} -->
+    """ + dashboard_devices(
+        [{"_id": API_ID, "deviceCurrentSettings": {}, "name": "  "}]
+    )
+    session = FakeSession([FakeResponse(200, page)])
+    cloud_client = api.DuepiCloudClient(session, "user", "secret")
+    cloud_client._authenticated = True
+
+    assert asyncio.run(cloud_client.async_list_devices()) == [
+        api.DuepiDeviceSummary(API_ID, API_ID, None)
+    ]
+
+
+def test_list_devices_returns_empty_for_an_incompatible_dashboard(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """No discoverable devices is a supported manual-entry fallback."""
+    api = duepi_test_modules.api
+    session = FakeSession([FakeResponse(200, "<html><!-- [] --></html>")])
+    cloud_client = api.DuepiCloudClient(session, "user", "secret")
+    cloud_client._authenticated = True
+
+    assert asyncio.run(cloud_client.async_list_devices()) == []
+
+
+def test_list_devices_reuses_the_safe_read_retry(
+    monkeypatch: pytest.MonkeyPatch, duepi_test_modules: SimpleNamespace
+) -> None:
+    """Discovery has the same one-retry policy as normal state reads."""
+    api = duepi_test_modules.api
+    session = FakeSession(
+        [api.aiohttp.ClientError("network"), FakeResponse(200, dashboard())]
+    )
+    cloud_client = api.DuepiCloudClient(session, "user", "secret")
+    cloud_client._authenticated = True
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(api.asyncio, "sleep", record_sleep)
+
+    assert asyncio.run(cloud_client.async_list_devices()) == [
+        api.DuepiDeviceSummary(DEVICE_ID, API_ID, None)
+    ]
+    assert sleeps == [2]
+
+
 def test_incompatible_html_never_fabricates_an_off_state(
     duepi_test_modules: SimpleNamespace,
 ) -> None:
@@ -199,6 +305,89 @@ def test_is_online_is_strictly_normalized(
 
     assert state.raw_online is expected
     assert state.online is expected
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "expected"),
+    [
+        ("alarm", "A01", "A01"),
+        ("alarmCode", 12, "12"),
+        ("alarmDescription", "Overheat", "Overheat"),
+        ("error", "Fan blocked", "Fan blocked"),
+        ("errorCode", 7, "7"),
+    ],
+)
+def test_alarm_candidates_are_parsed_from_current_settings(
+    duepi_test_modules: SimpleNamespace,
+    key: str,
+    value: object,
+    expected: str,
+) -> None:
+    """Known alarm fields are normalized to one diagnostic value."""
+    api = duepi_test_modules.api
+    payload = [
+        {
+            "_id": API_ID,
+            "univocalID": DEVICE_ID,
+            "deviceCurrentSettings": {
+                "powerState": "ON",
+                "isOnline": True,
+                key: value,
+            },
+        }
+    ]
+
+    state = client(api, FakeSession([]))._parse_dashboard(dashboard_devices(payload))
+
+    assert state.alarm == expected
+
+
+@pytest.mark.parametrize("clear_value", [None, "", "0", 0, False, "none", "No Alarm", "OK"])
+def test_clear_alarm_values_do_not_report_a_problem(
+    duepi_test_modules: SimpleNamespace, clear_value: object
+) -> None:
+    """Common clear encodings must remain falsey."""
+    api = duepi_test_modules.api
+    payload = [
+        {
+            "_id": API_ID,
+            "univocalID": DEVICE_ID,
+            "alarm": "top-level fallback",
+            "deviceCurrentSettings": {
+                "powerState": "OFF",
+                "isOnline": True,
+                "alarm": clear_value,
+            },
+        }
+    ]
+
+    state = client(api, FakeSession([]))._parse_dashboard(dashboard_devices(payload))
+
+    assert state.alarm == "top-level fallback"
+
+
+def test_alarm_priority_prefers_settings_then_candidate_order(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """Specific current settings win over stale top-level device data."""
+    api = duepi_test_modules.api
+    payload = [
+        {
+            "_id": API_ID,
+            "univocalID": DEVICE_ID,
+            "alarm": "stale",
+            "deviceCurrentSettings": {
+                "powerState": "ON",
+                "isOnline": True,
+                "alarm": "active",
+                "error": "lower priority",
+            },
+        }
+    ]
+
+    state = client(api, FakeSession([]))._parse_dashboard(dashboard_devices(payload))
+
+    assert state.alarm == "active"
 
 
 def test_read_server_error_retries_once_after_two_seconds(
@@ -400,7 +589,7 @@ def test_config_validation_maps_each_error_category_to_its_own_form_error(
                 raise errors[outcome]
             return object()
 
-    monkeypatch.setattr(config_flow.aiohttp, "ClientSession", Session)
+    monkeypatch.setattr(config_flow, "async_create_clientsession", lambda *_args, **_kwargs: Session())
     monkeypatch.setattr(config_flow, "DuepiCloudClient", StubClient)
     flow = config_flow.DuepiConfigFlow()
 

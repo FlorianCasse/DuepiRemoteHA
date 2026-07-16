@@ -4,10 +4,23 @@
     "step": {
       "user": {
         "title": "Connexion à dpremoteiot.com",
-        "description": "Entrez vos identifiants dpremoteiot.com et l'ID de votre appareil.",
+        "description": "Entrez vos identifiants dpremoteiot.com. Vos poêles seront découverts automatiquement.",
         "data": {
           "email": "Email",
-          "password": "Mot de passe",
+          "password": "Mot de passe"
+        }
+      },
+      "select_device": {
+        "title": "Sélectionner un poêle",
+        "description": "Choisissez le poêle à ajouter à Home Assistant.",
+        "data": {
+          "device_id": "Poêle"
+        }
+      },
+      "manual_device": {
+        "title": "Saisir l'ID de l'appareil",
+        "description": "Aucun poêle n'a pu être découvert automatiquement. Saisissez son ID d'appareil dpremoteiot.com.",
+        "data": {
           "device_id": "ID de l'appareil"
         }
       },
@@ -39,10 +52,17 @@
         "title": "Paramètres",
         "data": {
           "scan_interval": "Intervalle de mise à jour (secondes)",
-          "default_power": "Puissance par défaut (1-5)",
-          "default_temperature": "Température par défaut (°C)"
+          "default_power": "Puissance Confort/par défaut (1-5)",
+          "default_temperature": "Température Confort/par défaut (°C)",
+          "eco_power": "Puissance Eco (1-5)",
+          "eco_temperature": "Température Eco (°C)",
+          "pellet_kg_per_hour_min": "Débit estimé à la puissance 1 (kg/h)",
+          "pellet_kg_per_hour_max": "Débit estimé à la puissance 5 (kg/h)"
         }
       }
+    },
+    "error": {
+      "invalid_pellet_range": "Le débit minimal de pellets ne peut pas dépasser le débit maximal."
     }
   },
   "entity": {
@@ -58,11 +78,26 @@
       },
       "set_temperature": {
         "name": "Température de consigne"
+      },
+      "alarm": {
+        "name": "Alarme"
+      },
+      "last_seen": {
+        "name": "Dernière connexion"
+      },
+      "operating_hours": {
+        "name": "Heures de fonctionnement"
+      },
+      "pellet_consumption": {
+        "name": "Consommation de pellets (estimée)"
       }
     },
     "binary_sensor": {
       "online": {
         "name": "En ligne"
+      },
+      "problem": {
+        "name": "Problème"
       }
     },
     "number": {

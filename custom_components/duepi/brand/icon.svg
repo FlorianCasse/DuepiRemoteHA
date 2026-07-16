@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Pellet stove">
+  <rect x="42" y="45" width="172" height="166" rx="26" fill="#37474f"/>
+  <rect x="55" y="58" width="146" height="22" rx="8" fill="#263238"/>
+  <circle cx="181" cy="69" r="5" fill="#ffb300"/>
+  <rect x="70" y="94" width="116" height="87" rx="18" fill="#17262c"/>
+  <path d="M128 166c-25 0-42-16-42-38 0-20 13-34 30-50-2 16 7 23 14 29 5-15 15-25 22-31 2 19 18 29 18 51 0 22-17 39-42 39Z" fill="#ff6f00"/>
+  <path d="M128 157c-13 0-23-9-23-21 0-11 7-20 17-29 0 10 6 15 10 19 4-8 9-14 13-18 1 11 7 18 7 28 0 12-10 21-24 21Z" fill="#ffd54f"/>
+  <circle cx="92" cy="195" r="6" fill="#a1887f"/>
+  <circle cx="110" cy="195" r="6" fill="#8d6e63"/>
+  <circle cx="128" cy="195" r="6" fill="#a1887f"/>
+  <circle cx="146" cy="195" r="6" fill="#8d6e63"/>
+  <circle cx="164" cy="195" r="6" fill="#a1887f"/>
+  <path d="M67 211v12M189 211v12" stroke="#263238" stroke-width="12" stroke-linecap="round"/>
+</svg>

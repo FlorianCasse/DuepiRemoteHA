@@ -23,3 +23,20 @@ jobs:
         run: ruff check .
       - name: Test
         run: pytest -q
+
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # GitHub only detects a repository license from the default branch.
+          # Keep feature branches testable until their LICENSE reaches main.
+          ignore: ${{ github.ref_name != github.event.repository.default_branch && 'license' || '' }}

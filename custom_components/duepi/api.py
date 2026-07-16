@@ -7,6 +7,7 @@ import html
 import json
 import logging
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 import aiohttp
@@ -48,6 +49,9 @@ _RE_CSRF_INPUT = re.compile(r'<input[^>]*name=["\']_csrf["\'][^>]*value=["\']([^
 _RE_CSRF_INPUT_ALT = re.compile(r'<input[^>]*value=["\']([^"\']+)["\'][^>]*name=["\']_csrf["\']', re.IGNORECASE)
 _RE_CSRF_META = re.compile(r'<meta[^>]*name=["\']csrf-token["\'][^>]*content=["\']([^"\']+)["\']', re.IGNORECASE)
 
+_ALARM_KEYS = ("alarm", "alarmCode", "alarmDescription", "error", "errorCode")
+_CLEAR_ALARM_VALUES = {"", "0", "false", "none", "no alarm", "ok"}
+
 
 def _safe_int(value: object) -> int | None:
     """Convert a value to int, returning None on failure."""
@@ -84,6 +88,28 @@ def _normalize_online(value: object) -> bool | None:
             return True
         if normalized == "offline":
             return False
+    return None
+
+
+def _normalize_alarm(value: object) -> str | None:
+    """Normalize an alarm value without treating common clear values as faults."""
+    if value is None or value is False or value == 0:
+        return None
+    if not isinstance(value, (str, int, float)):
+        return None
+    normalized = str(value).strip()
+    if normalized.lower() in _CLEAR_ALARM_VALUES:
+        return None
+    return normalized or None
+
+
+def _extract_alarm(*sources: dict[str, object]) -> str | None:
+    """Return the first active alarm from the supplied mappings."""
+    for source in sources:
+        for key in _ALARM_KEYS:
+            alarm = _normalize_alarm(source.get(key))
+            if alarm is not None:
+                return alarm
     return None
 
 
@@ -134,6 +160,16 @@ class DuepiStoveState:
     set_temperature: int | None
     raw_online: bool | None
     online: bool | None
+    alarm: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class DuepiDeviceSummary:
+    """Describe a stove available on the authenticated account."""
+
+    device_id: str
+    api_id: str | None
+    name: str | None
 
 
 class DuepiCloudClient:
@@ -144,7 +180,7 @@ class DuepiCloudClient:
         session: aiohttp.ClientSession,
         email: str,
         password: str,
-        device_id: str,
+        device_id: str | None = None,
     ) -> None:
         self._session = session
         self._email = email
@@ -155,9 +191,14 @@ class DuepiCloudClient:
         self._api_device_id: str | None = None  # MongoDB ObjectId, resolved from dashboard
 
     @property
-    def device_id(self) -> str:
+    def device_id(self) -> str | None:
         """Return the device ID."""
         return self._device_id
+
+    def select_device(self, device_id: str, api_id: str | None = None) -> None:
+        """Select the stove used by state reads and commands."""
+        self._device_id = device_id
+        self._api_device_id = api_id
 
     async def async_close(self) -> None:
         """Retain compatibility without closing Home Assistant's session."""
@@ -234,24 +275,43 @@ class DuepiCloudClient:
 
         Raises DuepiAuthError, DuepiConnectionError, or DuepiParseError.
         """
-        await self._ensure_auth()
-
-        try:
-            page_html = await self._fetch_dashboard()
-        except DuepiSessionExpiredError:
-            self._authenticated = False
-            await self._ensure_auth()
-            page_html = await self._fetch_dashboard()
-        except (DuepiTransportError, DuepiServerError):
-            await asyncio.sleep(2)
-            try:
-                page_html = await self._fetch_dashboard()
-            except DuepiSessionExpiredError:
-                self._authenticated = False
-                await self._ensure_auth()
-                page_html = await self._fetch_dashboard()
-
+        page_html = await self._fetch_dashboard_resilient()
         return self._parse_dashboard(page_html)
+
+    async def async_list_devices(self) -> list[DuepiDeviceSummary]:
+        """Return the stoves available on the authenticated account."""
+        page_html = await self._fetch_dashboard_resilient()
+        devices: list[DuepiDeviceSummary] = []
+        seen: set[str] = set()
+
+        for device in self._iter_dashboard_devices(page_html):
+            univocal_id = device.get("univocalID")
+            api_id_value = device.get("_id")
+            api_id = api_id_value if isinstance(api_id_value, str) and api_id_value else None
+            device_id = (
+                univocal_id
+                if isinstance(univocal_id, str) and univocal_id
+                else api_id
+            )
+            if device_id is None or device_id in seen:
+                continue
+
+            name_value = device.get("name") or device.get("deviceName")
+            name = (
+                name_value.strip()
+                if isinstance(name_value, str) and name_value.strip()
+                else None
+            )
+            seen.add(device_id)
+            devices.append(
+                DuepiDeviceSummary(
+                    device_id=device_id,
+                    api_id=api_id,
+                    name=name,
+                )
+            )
+
+        return devices
 
     async def async_turn_on(self, power: int | None = None, temperature: int | None = None) -> None:
         """Turn the stove on."""
@@ -288,6 +348,25 @@ class DuepiCloudClient:
         if not self._authenticated:
             if not await self.async_login():
                 raise DuepiInvalidCredentialsError("Login failed with provided credentials")
+
+    async def _fetch_dashboard_resilient(self) -> str:
+        """Fetch the dashboard with one safe retry or reauthentication."""
+        await self._ensure_auth()
+
+        try:
+            return await self._fetch_dashboard()
+        except DuepiSessionExpiredError:
+            self._authenticated = False
+            await self._ensure_auth()
+            return await self._fetch_dashboard()
+        except (DuepiTransportError, DuepiServerError):
+            await asyncio.sleep(2)
+            try:
+                return await self._fetch_dashboard()
+            except DuepiSessionExpiredError:
+                self._authenticated = False
+                await self._ensure_auth()
+                return await self._fetch_dashboard()
 
     async def _fetch_dashboard(self) -> str:
         """Fetch the dashboard HTML, detecting session expiry."""
@@ -352,6 +431,8 @@ class DuepiCloudClient:
         await self._ensure_auth()
 
         effective_id = self._api_device_id or self._device_id
+        if effective_id is None:
+            raise DuepiParseError("No device has been selected")
         data = {
             "deviceId": effective_id,
             "active": "1" if active else "0",
@@ -387,6 +468,9 @@ class DuepiCloudClient:
         comments with HTML-encoded quotes (&#34;). A dashboard is accepted only
         when it contains the configured device and its current settings.
         """
+        if self._device_id is None:
+            raise DuepiParseError("No device has been selected")
+
         device_json = self._extract_device_json(page_html)
         if device_json is None:
             raise DuepiParseError("Configured device was not found in the dashboard")
@@ -413,39 +497,45 @@ class DuepiCloudClient:
             set_temperature=_safe_int(settings.get("settedTemperature")),
             raw_online=online,
             online=online,
+            alarm=_extract_alarm(settings, device_json),
         )
 
-    def _extract_device_json(self, page_html: str) -> dict | None:
-        """Extract device data from JSON embedded in HTML comments.
-
-        The dashboard contains comments like:
-        <!-- [{"_id":"...","univocalID":"...","deviceCurrentSettings":{...}}] -->
-        with quotes encoded as &#34;
-        """
-        # Find all HTML comments that contain our device ID
+    @staticmethod
+    def _iter_dashboard_devices(page_html: str) -> Iterator[dict[str, object]]:
+        """Yield valid device dictionaries embedded in dashboard comments."""
         for comment_match in re.finditer(r"<!--(.*?)-->", page_html, re.DOTALL):
-            comment = comment_match.group(1).strip()
-            if self._device_id not in comment:
-                continue
-
-            # Decode HTML entities (&#34; -> ")
-            decoded = html.unescape(comment)
-
+            decoded = html.unescape(comment_match.group(1).strip())
             try:
                 data = json.loads(decoded)
             except (json.JSONDecodeError, ValueError):
-                _LOGGER.debug("Found device ID in comment but JSON parse failed")
                 continue
 
             candidates = data if isinstance(data, list) else [data]
             for device in candidates:
                 if not isinstance(device, dict):
                     continue
-                if (
-                    device.get("_id") == self._device_id
-                    or device.get("univocalID") == self._device_id
+                has_identifier = any(
+                    isinstance(device.get(key), str) and bool(device.get(key))
+                    for key in ("univocalID", "_id")
+                )
+                if has_identifier and isinstance(
+                    device.get("deviceCurrentSettings"), dict
                 ):
-                    return device
+                    yield device
+
+    def _extract_device_json(self, page_html: str) -> dict[str, object] | None:
+        """Extract device data from JSON embedded in HTML comments.
+
+        The dashboard contains comments like:
+        <!-- [{"_id":"...","univocalID":"...","deviceCurrentSettings":{...}}] -->
+        with quotes encoded as &#34;
+        """
+        for device in self._iter_dashboard_devices(page_html):
+            if (
+                device.get("_id") == self._device_id
+                or device.get("univocalID") == self._device_id
+            ):
+                return device
 
         _LOGGER.debug("No matching device data found in dashboard")
         return None

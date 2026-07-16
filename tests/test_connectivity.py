@@ -6,7 +6,7 @@ import asyncio
 import importlib
 import logging
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -330,6 +330,35 @@ def test_raw_online_restores_connectivity_immediately(
     )
 
     assert [state.online for state in results] == [True, True, False, True, True]
+
+
+def test_last_seen_updates_only_on_an_explicit_online_report(
+    monkeypatch: pytest.MonkeyPatch, duepi_test_modules: SimpleNamespace
+) -> None:
+    """Offline and unknown reports preserve the last confirmed online time."""
+    first_seen = datetime(2026, 7, 16, 8, 0, tzinfo=timezone.utc)
+    second_seen = datetime(2026, 7, 16, 8, 5, tzinfo=timezone.utc)
+    timestamps = iter([first_seen, second_seen])
+
+    class FixedDateTime:
+        @classmethod
+        def now(cls, tz: timezone) -> datetime:
+            assert tz is timezone.utc
+            return next(timestamps)
+
+    monkeypatch.setattr(duepi_test_modules.coordinator, "datetime", FixedDateTime)
+    coordinator = duepi_test_modules.coordinator.DuepiCoordinator(
+        object(), config_entry(), FakeClient([]), timedelta(seconds=30)
+    )
+    assert coordinator.last_seen is None
+
+    coordinator._filter_connectivity(stove_state(duepi_test_modules.api, True))
+    assert coordinator.last_seen == first_seen
+    coordinator._filter_connectivity(stove_state(duepi_test_modules.api, False))
+    coordinator._filter_connectivity(stove_state(duepi_test_modules.api, None))
+    assert coordinator.last_seen == first_seen
+    coordinator._filter_connectivity(stove_state(duepi_test_modules.api, True))
+    assert coordinator.last_seen == second_seen
 
 
 def test_unknown_report_does_not_hide_a_later_reconnect(
