@@ -46,6 +46,13 @@ def test_release_metadata_is_consistent() -> None:
     assert hacs["filename"] == "duepi.zip"
 
 
+def test_repository_declares_the_mit_license() -> None:
+    """HACS requires an explicit repository license."""
+    license_text = (ROOT / "LICENSE").read_text()
+    assert license_text.startswith("MIT License")
+    assert "Copyright (c) 2026 Florian Casse" in license_text
+
+
 def test_brand_icon_is_a_transparent_256_pixel_png() -> None:
     """The local brand asset satisfies HACS without a third-party logo."""
     data = (INTEGRATION / "brand" / "icon.png").read_bytes()

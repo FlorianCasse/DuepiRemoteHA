@@ -3,4 +3,4 @@
 - [x] Workstream A: automatic device discovery
 - [x] Workstream B: alarms, presets, last seen, and accumulating sensors
 - [x] Workstream C: translations, HACS compliance, release workflow, and README
-- [ ] Push the branch and verify GitHub Actions
+- [x] Push the branch and verify GitHub Actions
