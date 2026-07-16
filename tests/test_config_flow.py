@@ -168,3 +168,48 @@ def test_manual_device_maps_parse_failure(
 
     assert result["step_id"] == "manual_device"
     assert result["errors"] == {"base": "invalid_device"}
+
+
+def test_options_reject_an_inverted_pellet_range(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """The configured minimum pellet rate cannot exceed the maximum."""
+    flow = duepi_test_modules.config_flow.DuepiOptionsFlow(
+        SimpleNamespace(options={})
+    )
+    options = {
+        "scan_interval": 30,
+        "default_power": 5,
+        "default_temperature": 25,
+        "eco_power": 1,
+        "eco_temperature": 18,
+        "pellet_kg_per_hour_min": 2.0,
+        "pellet_kg_per_hour_max": 1.0,
+    }
+
+    result = asyncio.run(flow.async_step_init(options))
+
+    assert result["type"] == "form"
+    assert result["errors"] == {"base": "invalid_pellet_range"}
+
+
+def test_options_accept_a_valid_pellet_range(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """Valid preset and consumption options are stored unchanged."""
+    flow = duepi_test_modules.config_flow.DuepiOptionsFlow(
+        SimpleNamespace(options={})
+    )
+    options = {
+        "scan_interval": 60,
+        "default_power": 4,
+        "default_temperature": 24,
+        "eco_power": 2,
+        "eco_temperature": 17,
+        "pellet_kg_per_hour_min": 0.7,
+        "pellet_kg_per_hour_max": 1.9,
+    }
+
+    result = asyncio.run(flow.async_step_init(options))
+
+    assert result == {"type": "create_entry", "data": options}

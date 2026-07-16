@@ -49,6 +49,9 @@ _RE_CSRF_INPUT = re.compile(r'<input[^>]*name=["\']_csrf["\'][^>]*value=["\']([^
 _RE_CSRF_INPUT_ALT = re.compile(r'<input[^>]*value=["\']([^"\']+)["\'][^>]*name=["\']_csrf["\']', re.IGNORECASE)
 _RE_CSRF_META = re.compile(r'<meta[^>]*name=["\']csrf-token["\'][^>]*content=["\']([^"\']+)["\']', re.IGNORECASE)
 
+_ALARM_KEYS = ("alarm", "alarmCode", "alarmDescription", "error", "errorCode")
+_CLEAR_ALARM_VALUES = {"", "0", "false", "none", "no alarm", "ok"}
+
 
 def _safe_int(value: object) -> int | None:
     """Convert a value to int, returning None on failure."""
@@ -85,6 +88,28 @@ def _normalize_online(value: object) -> bool | None:
             return True
         if normalized == "offline":
             return False
+    return None
+
+
+def _normalize_alarm(value: object) -> str | None:
+    """Normalize an alarm value without treating common clear values as faults."""
+    if value is None or value is False or value == 0:
+        return None
+    if not isinstance(value, (str, int, float)):
+        return None
+    normalized = str(value).strip()
+    if normalized.lower() in _CLEAR_ALARM_VALUES:
+        return None
+    return normalized or None
+
+
+def _extract_alarm(*sources: dict[str, object]) -> str | None:
+    """Return the first active alarm from the supplied mappings."""
+    for source in sources:
+        for key in _ALARM_KEYS:
+            alarm = _normalize_alarm(source.get(key))
+            if alarm is not None:
+                return alarm
     return None
 
 
@@ -135,6 +160,7 @@ class DuepiStoveState:
     set_temperature: int | None
     raw_online: bool | None
     online: bool | None
+    alarm: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -471,6 +497,7 @@ class DuepiCloudClient:
             set_temperature=_safe_int(settings.get("settedTemperature")),
             raw_online=online,
             online=online,
+            alarm=_extract_alarm(settings, device_json),
         )
 
     @staticmethod

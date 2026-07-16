@@ -46,6 +46,15 @@ class _ConfigFlow:
 class _OptionsFlow:
     """Minimal OptionsFlow base for importing the configuration module."""
 
+    def __init__(self, config_entry: object | None = None) -> None:
+        self.config_entry = config_entry or SimpleNamespace(options={})
+
+    def async_show_form(self, **kwargs: object) -> dict[str, object]:
+        return {"type": "form", **kwargs}
+
+    def async_create_entry(self, **kwargs: object) -> dict[str, object]:
+        return {"type": "create_entry", **kwargs}
+
 
 class _HomeAssistant:
     """Test stand-in for Home Assistant."""

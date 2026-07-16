@@ -18,6 +18,11 @@ def _safe_error_name(error: BaseException | None) -> str | None:
     return type(error).__name__ if error is not None else None
 
 
+def _serialize_datetime(value: object) -> object:
+    """Serialize a datetime-like diagnostic value when available."""
+    return value.isoformat() if hasattr(value, "isoformat") else value
+
+
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
@@ -39,10 +44,9 @@ async def async_get_config_entry_diagnostics(
         "state": asdict(coordinator.data) if coordinator.data else None,
         "last_update_success": coordinator.last_update_success,
         "last_successful_update": (
-            last_successful_update.isoformat()
-            if hasattr(last_successful_update, "isoformat")
-            else last_successful_update
+            _serialize_datetime(last_successful_update)
         ),
+        "last_seen": _serialize_datetime(getattr(coordinator, "last_seen", None)),
         "last_error": _safe_error_name(
             getattr(coordinator, "last_exception", None)
         ),

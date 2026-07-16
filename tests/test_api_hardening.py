@@ -307,6 +307,89 @@ def test_is_online_is_strictly_normalized(
     assert state.online is expected
 
 
+@pytest.mark.parametrize(
+    ("key", "value", "expected"),
+    [
+        ("alarm", "A01", "A01"),
+        ("alarmCode", 12, "12"),
+        ("alarmDescription", "Overheat", "Overheat"),
+        ("error", "Fan blocked", "Fan blocked"),
+        ("errorCode", 7, "7"),
+    ],
+)
+def test_alarm_candidates_are_parsed_from_current_settings(
+    duepi_test_modules: SimpleNamespace,
+    key: str,
+    value: object,
+    expected: str,
+) -> None:
+    """Known alarm fields are normalized to one diagnostic value."""
+    api = duepi_test_modules.api
+    payload = [
+        {
+            "_id": API_ID,
+            "univocalID": DEVICE_ID,
+            "deviceCurrentSettings": {
+                "powerState": "ON",
+                "isOnline": True,
+                key: value,
+            },
+        }
+    ]
+
+    state = client(api, FakeSession([]))._parse_dashboard(dashboard_devices(payload))
+
+    assert state.alarm == expected
+
+
+@pytest.mark.parametrize("clear_value", [None, "", "0", 0, False, "none", "No Alarm", "OK"])
+def test_clear_alarm_values_do_not_report_a_problem(
+    duepi_test_modules: SimpleNamespace, clear_value: object
+) -> None:
+    """Common clear encodings must remain falsey."""
+    api = duepi_test_modules.api
+    payload = [
+        {
+            "_id": API_ID,
+            "univocalID": DEVICE_ID,
+            "alarm": "top-level fallback",
+            "deviceCurrentSettings": {
+                "powerState": "OFF",
+                "isOnline": True,
+                "alarm": clear_value,
+            },
+        }
+    ]
+
+    state = client(api, FakeSession([]))._parse_dashboard(dashboard_devices(payload))
+
+    assert state.alarm == "top-level fallback"
+
+
+def test_alarm_priority_prefers_settings_then_candidate_order(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """Specific current settings win over stale top-level device data."""
+    api = duepi_test_modules.api
+    payload = [
+        {
+            "_id": API_ID,
+            "univocalID": DEVICE_ID,
+            "alarm": "stale",
+            "deviceCurrentSettings": {
+                "powerState": "ON",
+                "isOnline": True,
+                "alarm": "active",
+                "error": "lower priority",
+            },
+        }
+    ]
+
+    state = client(api, FakeSession([]))._parse_dashboard(dashboard_devices(payload))
+
+    assert state.alarm == "active"
+
+
 def test_read_server_error_retries_once_after_two_seconds(
     monkeypatch: pytest.MonkeyPatch, duepi_test_modules: SimpleNamespace
 ) -> None:

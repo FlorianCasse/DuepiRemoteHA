@@ -24,7 +24,16 @@ from .api import (
     DuepiStoveState,
     DuepiTransportError,
 )
-from .const import DEFAULT_POWER, DEFAULT_TEMPERATURE, DOMAIN
+from .const import (
+    DEFAULT_ECO_POWER,
+    DEFAULT_ECO_TEMPERATURE,
+    DEFAULT_POWER,
+    DEFAULT_TEMPERATURE,
+    DOMAIN,
+    PRESET_COMFORT,
+    PRESET_ECO,
+    PRESET_NONE,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,6 +57,8 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         *,
         default_power: int = DEFAULT_POWER,
         default_temperature: int = DEFAULT_TEMPERATURE,
+        eco_power: int = DEFAULT_ECO_POWER,
+        eco_temperature: int = DEFAULT_ECO_TEMPERATURE,
     ) -> None:
         super().__init__(
             hass,
@@ -59,6 +70,9 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         self.client = client
         self._default_power = default_power
         self._default_temperature = default_temperature
+        self._eco_power = eco_power
+        self._eco_temperature = eco_temperature
+        self._pending_preset: str | None = None
         self._desired_power: int | None = None
         self._was_heating: bool = False
         self._has_seen_connected = False
@@ -68,6 +82,7 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         self._disconnect_confirmed = False
         self._was_disconnected = False
         self._last_successful_update_time: datetime | None = None
+        self._last_seen: datetime | None = None
 
     @property
     def raw_online(self) -> bool | None:
@@ -83,6 +98,11 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
     def last_successful_update_time(self) -> datetime | None:
         """Return when a stove-state poll most recently completed successfully."""
         return self._last_successful_update_time
+
+    @property
+    def last_seen(self) -> datetime | None:
+        """Return the last time the cloud explicitly reported the stove online."""
+        return self._last_seen
 
     @property
     def disconnect_grace_started_at(self) -> float | None:
@@ -161,6 +181,7 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         raw_online = state.raw_online
 
         if raw_online is True:
+            self._last_seen = datetime.now(timezone.utc)
             was_disconnected = (
                 self._disconnect_grace_started_at is not None
                 or self._disconnect_confirmed
@@ -243,21 +264,27 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
     async def async_turn_on(self) -> None:
         """Turn the stove on and refresh."""
         state = self.data
-        power = self._default_power
-        temperature = self._default_temperature
+        pending_preset = self._pending_preset
+        targets = (
+            self.preset_targets(pending_preset)
+            if pending_preset is not None
+            else None
+        )
+        power, temperature = targets or (
+            self._default_power,
+            self._default_temperature,
+        )
         self._desired_power = power
         _LOGGER.info("Turning stove ON (power=%d, temp=%d)", power, temperature)
         await self.client.async_turn_on(power=power, temperature=temperature)
+        self._pending_preset = None
         if state:
             self.async_set_updated_data(
-                DuepiStoveState(
+                replace(
+                    state,
                     power_on=True,
-                    status_text=state.status_text,
-                    room_temperature=state.room_temperature,
                     working_power=power,
                     set_temperature=temperature,
-                    raw_online=state.raw_online,
-                    online=state.online,
                 )
             )
 
@@ -267,17 +294,7 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         await self.client.async_turn_off()
         state = self.data
         if state:
-            self.async_set_updated_data(
-                DuepiStoveState(
-                    power_on=False,
-                    status_text=state.status_text,
-                    room_temperature=state.room_temperature,
-                    working_power=state.working_power,
-                    set_temperature=state.set_temperature,
-                    raw_online=state.raw_online,
-                    online=state.online,
-                )
-            )
+            self.async_set_updated_data(replace(state, power_on=False))
 
     async def async_set_power(self, power: int) -> None:
         """Set working power and refresh."""
@@ -286,17 +303,7 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         await self.client.async_set_power(power, current_state=self.data)
         state = self.data
         if state:
-            self.async_set_updated_data(
-                DuepiStoveState(
-                    power_on=state.power_on,
-                    status_text=state.status_text,
-                    room_temperature=state.room_temperature,
-                    working_power=power,
-                    set_temperature=state.set_temperature,
-                    raw_online=state.raw_online,
-                    online=state.online,
-                )
-            )
+            self.async_set_updated_data(replace(state, working_power=power))
 
     async def async_set_temperature(self, temperature: int) -> None:
         """Set target temperature and refresh."""
@@ -304,19 +311,64 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         await self.client.async_set_temperature(temperature, current_state=self.data)
         state = self.data
         if state:
-            self.async_set_updated_data(
-                DuepiStoveState(
-                    power_on=state.power_on,
-                    status_text=state.status_text,
-                    room_temperature=state.room_temperature,
-                    working_power=state.working_power,
-                    set_temperature=temperature,
-                    raw_online=state.raw_online,
-                    online=state.online,
-                )
+            self.async_set_updated_data(replace(state, set_temperature=temperature))
+
+    def preset_targets(self, preset: str) -> tuple[int, int] | None:
+        """Return the configured targets for a climate preset."""
+        if preset == PRESET_NONE:
+            return None
+        if preset == PRESET_ECO:
+            return self._eco_power, self._eco_temperature
+        if preset == PRESET_COMFORT:
+            return self._default_power, self._default_temperature
+        raise ValueError(f"Unsupported preset: {preset}")
+
+    def current_preset(self) -> str:
+        """Return the pending or currently matching climate preset."""
+        if self._pending_preset is not None:
+            return self._pending_preset
+        state = self.data
+        if state is None:
+            return PRESET_NONE
+        current_targets = (state.working_power, state.set_temperature)
+        if current_targets == self.preset_targets(PRESET_ECO):
+            return PRESET_ECO
+        if current_targets == self.preset_targets(PRESET_COMFORT):
+            return PRESET_COMFORT
+        return PRESET_NONE
+
+    async def async_set_preset(self, preset: str) -> None:
+        """Apply a preset now or defer it until the next turn-on."""
+        targets = self.preset_targets(preset)
+        if targets is None:
+            self._pending_preset = None
+            return
+
+        state = self.data
+        if state is None or not state.power_on:
+            self._pending_preset = preset
+            return
+
+        power, temperature = targets
+        self._desired_power = power
+        await self.client.async_turn_on(power=power, temperature=temperature)
+        self.async_set_updated_data(
+            replace(
+                state,
+                working_power=power,
+                set_temperature=temperature,
             )
+        )
 
     async def _async_enforce_power(self, power: int) -> None:
         """Re-send desired power after stove reaches nominal heating."""
         await self.client.async_set_power(power, current_state=self.data)
         await self.async_request_refresh()
+
+
+def state_has_problem(state: DuepiStoveState | None) -> bool | None:
+    """Return whether a stove state reports an alarm or error status."""
+    if state is None:
+        return None
+    status = state.status_text.lower() if state.status_text else ""
+    return bool(state.alarm) or "alarm" in status or "error" in status

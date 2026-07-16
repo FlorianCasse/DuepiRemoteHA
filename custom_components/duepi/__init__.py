@@ -18,7 +18,11 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_DEFAULT_POWER,
     CONF_DEFAULT_TEMPERATURE,
+    CONF_ECO_POWER,
+    CONF_ECO_TEMPERATURE,
     CONF_SCAN_INTERVAL,
+    DEFAULT_ECO_POWER,
+    DEFAULT_ECO_TEMPERATURE,
     DEFAULT_POWER,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TEMPERATURE,
@@ -62,6 +66,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: DuepiConfigEntry) -> boo
             default_power=entry.options.get(CONF_DEFAULT_POWER, DEFAULT_POWER),
             default_temperature=entry.options.get(
                 CONF_DEFAULT_TEMPERATURE, DEFAULT_TEMPERATURE
+            ),
+            eco_power=entry.options.get(CONF_ECO_POWER, DEFAULT_ECO_POWER),
+            eco_temperature=entry.options.get(
+                CONF_ECO_TEMPERATURE, DEFAULT_ECO_TEMPERATURE
             ),
         )
 

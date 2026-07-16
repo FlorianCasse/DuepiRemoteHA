@@ -28,7 +28,15 @@ from .const import (
     CONF_DEFAULT_POWER,
     CONF_DEFAULT_TEMPERATURE,
     CONF_DEVICE_ID,
+    CONF_ECO_POWER,
+    CONF_ECO_TEMPERATURE,
+    CONF_PELLET_KG_PER_HOUR_MAX,
+    CONF_PELLET_KG_PER_HOUR_MIN,
     CONF_SCAN_INTERVAL,
+    DEFAULT_ECO_POWER,
+    DEFAULT_ECO_TEMPERATURE,
+    DEFAULT_PELLET_KG_PER_HOUR_MAX,
+    DEFAULT_PELLET_KG_PER_HOUR_MIN,
     DEFAULT_POWER,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TEMPERATURE,
@@ -284,10 +292,17 @@ class DuepiOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage the options."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
+            if (
+                user_input[CONF_PELLET_KG_PER_HOUR_MIN]
+                > user_input[CONF_PELLET_KG_PER_HOUR_MAX]
+            ):
+                errors["base"] = "invalid_pellet_range"
+            else:
+                return self.async_create_entry(data=user_input)
 
-        options = self.config_entry.options
+        options = user_input or self.config_entry.options
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
@@ -307,6 +322,34 @@ class DuepiOptionsFlow(OptionsFlow):
                         vol.Coerce(int),
                         vol.Range(min=MIN_TEMPERATURE, max=MAX_TEMPERATURE),
                     ),
+                    vol.Optional(
+                        CONF_ECO_POWER,
+                        default=options.get(CONF_ECO_POWER, DEFAULT_ECO_POWER),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=MIN_POWER, max=MAX_POWER)),
+                    vol.Optional(
+                        CONF_ECO_TEMPERATURE,
+                        default=options.get(
+                            CONF_ECO_TEMPERATURE, DEFAULT_ECO_TEMPERATURE
+                        ),
+                    ): vol.All(
+                        vol.Coerce(int),
+                        vol.Range(min=MIN_TEMPERATURE, max=MAX_TEMPERATURE),
+                    ),
+                    vol.Optional(
+                        CONF_PELLET_KG_PER_HOUR_MIN,
+                        default=options.get(
+                            CONF_PELLET_KG_PER_HOUR_MIN,
+                            DEFAULT_PELLET_KG_PER_HOUR_MIN,
+                        ),
+                    ): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
+                    vol.Optional(
+                        CONF_PELLET_KG_PER_HOUR_MAX,
+                        default=options.get(
+                            CONF_PELLET_KG_PER_HOUR_MAX,
+                            DEFAULT_PELLET_KG_PER_HOUR_MAX,
+                        ),
+                    ): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
                 }
             ),
+            errors=errors,
         )

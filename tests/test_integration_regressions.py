@@ -137,6 +137,8 @@ def test_setup_uses_ha_managed_session_with_isolated_cookie_jar(
     assert created["coordinator_kwargs"] == {
         "default_power": 4,
         "default_temperature": 27,
+        "eco_power": 1,
+        "eco_temperature": 18,
         "update_interval": timedelta(seconds=30),
     }
 
@@ -156,12 +158,14 @@ def test_diagnostics_redacts_all_identifiers_and_exposes_connectivity_timing(
             set_temperature=27,
             raw_online=False,
             online=True,
+            alarm="A01",
         ),
         raw_online=False,
         filtered_online=True,
         disconnect_elapsed_seconds=0,
         last_update_success=True,
         last_successful_update_time="2026-07-13T10:00:00+00:00",
+        last_seen="2026-07-13T09:59:30+00:00",
         last_exception=RuntimeError("email=person@example.test token=secret"),
     )
 
@@ -175,6 +179,8 @@ def test_diagnostics_redacts_all_identifiers_and_exposes_connectivity_timing(
         "grace_period_seconds": 120,
     }
     assert result["last_successful_update"] == "2026-07-13T10:00:00+00:00"
+    assert result["last_seen"] == "2026-07-13T09:59:30+00:00"
+    assert result["state"]["alarm"] == "A01"
     assert result["last_error"] == "RuntimeError"
     assert "device-secret" not in serialized
     assert "person@example.test" not in serialized
