@@ -53,6 +53,15 @@ def test_repository_declares_the_mit_license() -> None:
     assert "Copyright (c) 2026 Florian Casse" in license_text
 
 
+def test_hacs_ci_keeps_default_branch_validation_strict() -> None:
+    """Only feature branches bypass GitHub's default-branch license cache."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    assert "uses: hacs/action@main" in workflow
+    assert "github.ref_name != github.event.repository.default_branch" in workflow
+    assert "'license' || ''" in workflow
+    assert "ignore: brands" not in workflow
+
+
 def test_brand_icon_is_a_transparent_256_pixel_png() -> None:
     """The local brand asset satisfies HACS without a third-party logo."""
     data = (INTEGRATION / "brand" / "icon.png").read_bytes()
