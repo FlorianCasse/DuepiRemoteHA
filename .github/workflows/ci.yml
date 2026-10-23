@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install test tools
-        run: python -m pip install ruff pytest aiohttp
+        run: python -m pip install "ruff==0.15.12" pytest aiohttp
       - name: Compile
         run: python -m compileall -q custom_components migrate.py
       - name: Lint
