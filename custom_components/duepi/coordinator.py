@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import replace
@@ -15,6 +16,7 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
+    DuepiApiError,
     DuepiAuthError,
     DuepiCloudClient,
     DuepiConnectionError,
@@ -41,6 +43,9 @@ _LOGGER = logging.getLogger(__name__)
 # Wait long enough to absorb that upstream heartbeat gap while still exposing
 # sustained disconnects promptly.
 DISCONNECT_GRACE_PERIOD = 120
+
+# Cloud commands sent to re-apply the desired power after ignition, per turn-on.
+MAX_ENFORCE_POWER_ATTEMPTS = 3
 
 
 class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
@@ -74,7 +79,11 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         self._eco_temperature = eco_temperature
         self._pending_preset: str | None = None
         self._desired_power: int | None = None
-        self._was_heating: bool = False
+        self._enforce_power_pending = False
+        self._enforce_seen_on = False
+        self._enforce_attempts = 0
+        self._turn_off_generation = 0
+        self._command_lock = asyncio.Lock()
         self._has_seen_connected = False
         self._disconnect_grace_started_at: float | None = None
         self._disconnect_grace_cancel: Callable[[], None] | None = None
@@ -138,26 +147,29 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
                 state.working_power,
             )
 
-            # Detect transition to nominal heating and enforce desired power
+            # Some firmwares ignore settedPower during ignition and start at a
+            # fixed level. The cloud echoes the last settedPower sent, not the
+            # power the stove actually runs at, so the reported value cannot
+            # reveal this. Re-send the desired power once per HA turn-on, when
+            # the stove first reports nominal heating.
             is_heating = bool(
                 state.status_text and "heating" in state.status_text.lower()
             )
-            if is_heating and not self._was_heating:
-                if (
-                    self._desired_power is not None
-                    and state.working_power != self._desired_power
-                ):
-                    _LOGGER.info(
-                        "Stove reached nominal heating — enforcing desired power %d (reported %d)",
-                        self._desired_power,
-                        state.working_power,
-                    )
+            if self._enforce_power_pending:
+                if state.power_on:
+                    self._enforce_seen_on = True
+                elif self._enforce_seen_on:
+                    # Alarm, or switched off from the panel/app before heating.
+                    _LOGGER.debug("Stove off before nominal heating; dropping power enforcement")
+                    self._enforce_power_pending = False
+                if self._enforce_power_pending and state.power_on and is_heating:
+                    self._enforce_power_pending = False
+                    _LOGGER.info("Stove reached nominal heating — enforcing desired power")
                     self.config_entry.async_create_background_task(
                         self.hass,
-                        self._async_enforce_power(self._desired_power),
+                        self._async_enforce_power(state, self._turn_off_generation),
                         name=f"{DOMAIN}_enforce_power",
                     )
-            self._was_heating = is_heating
             self._last_successful_update_time = datetime.now(timezone.utc)
 
             return state
@@ -277,6 +289,9 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         self._desired_power = power
         _LOGGER.info("Turning stove ON (power=%d, temp=%d)", power, temperature)
         await self.client.async_turn_on(power=power, temperature=temperature)
+        self._enforce_power_pending = True
+        self._enforce_seen_on = False
+        self._enforce_attempts = 0
         self._pending_preset = None
         if state:
             self.async_set_updated_data(
@@ -291,7 +306,12 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
     async def async_turn_off(self) -> None:
         """Turn the stove off and refresh."""
         _LOGGER.info("Turning stove OFF")
-        await self.client.async_turn_off()
+        # Invalidate any scheduled enforcement first, and wait for one already
+        # sending, so its active=1 command can never land after this one.
+        self._enforce_power_pending = False
+        self._turn_off_generation += 1
+        async with self._command_lock:
+            await self.client.async_turn_off()
         state = self.data
         if state:
             self.async_set_updated_data(replace(state, power_on=False))
@@ -360,9 +380,41 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
             )
         )
 
-    async def _async_enforce_power(self, power: int) -> None:
-        """Re-send desired power after stove reaches nominal heating."""
-        await self.client.async_set_power(power, current_state=self.data)
+    async def _async_enforce_power(self, state: DuepiStoveState, generation: int) -> None:
+        """Re-send desired power after stove reaches nominal heating.
+
+        The command is built from the poll that observed heating (stove on), not
+        from self.data, which may still hold the previous poll at this point.
+        """
+        # Read at send time so a power change made meanwhile is not undone.
+        power = self._desired_power
+        if power is None or state.set_temperature is None:
+            return
+        async with self._command_lock:
+            if generation != self._turn_off_generation:
+                return
+            try:
+                await self.client.async_set_power(power, current_state=state)
+            except DuepiApiError as err:
+                self._enforce_attempts += 1
+                if generation != self._turn_off_generation:
+                    # Turned off while this command was in flight; never re-arm.
+                    return
+                if self._enforce_attempts < MAX_ENFORCE_POWER_ATTEMPTS:
+                    _LOGGER.warning(
+                        "Failed to enforce desired power %d, retrying on next poll: %s",
+                        power,
+                        err,
+                    )
+                    self._enforce_power_pending = True
+                else:
+                    _LOGGER.warning(
+                        "Failed to enforce desired power %d after %d attempts: %s",
+                        power,
+                        self._enforce_attempts,
+                        err,
+                    )
+                return
         await self.async_request_refresh()
 
 

@@ -87,7 +87,7 @@ If the dashboard format prevents automatic discovery, the flow falls back to a m
 | Option | Default | Description |
 |---|---|---|
 | Update interval | 30s | How often to poll the stove state (min: 30s) |
-| Comfort/default power | 5 | Power level used for Comfort and normal turn-on (1-5) |
+| Comfort/default power | 1 | Power level used for Comfort and normal turn-on (1-5) |
 | Comfort/default temperature | 25°C | Temperature used for Comfort and normal turn-on (5-40°C) |
 | Eco power | 1 | Power level used by the Eco preset (1-5) |
 | Eco temperature | 18°C | Temperature used by the Eco preset (5-40°C) |
@@ -284,7 +284,7 @@ Restart Home Assistant and view the logs:
 
 ## Known Limitations
 
-- **Power level may be ignored on startup** — some stove models always start at a fixed power level regardless of the `settedPower` value. This is a stove firmware limitation, not a bug in this integration.
+- **Power level may be ignored on startup** — some stove models always start at a fixed power level regardless of the `settedPower` value. When the stove is turned on from Home Assistant, the integration re-sends the desired power once, when the stove first reports nominal heating, so the configured level applies after ignition. Stoves started from their panel or the vendor app are left alone.
 - **Cloud dependency** — requires internet connectivity (communicates via dpremoteiot.com, not locally).
 - **HTML scraping fallback** — state detection primarily uses JSON data embedded in the dashboard HTML, with regex parsing as a fallback. If dpremoteiot.com changes their layout, the integration may need updating.
 - **Estimated pellet use** — consumption is calculated from configured rates and observed power, not measured by the stove. Gaps are capped to avoid counting through long outages or restarts.

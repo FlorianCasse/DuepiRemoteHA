@@ -646,3 +646,20 @@ def test_parse_failure_is_not_retried(
 
     assert len(session.get_calls) == 1
     assert sleeps == []
+
+
+def test_turn_off_without_power_falls_back_to_default_power_one(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """Commands without an explicit power send the lowest default power level."""
+    api = duepi_test_modules.api
+    session = FakeSession([], [FakeResponse(200)])
+    cloud_client = client(api, session)
+    cloud_client._authenticated = True
+
+    asyncio.run(cloud_client.async_turn_off())
+
+    data = session.post_calls[0][1]["data"]
+    assert data["settedPower"] == "1"
+    assert data["settedTemperature"] == "25"
+    assert data["active"] == "0"
