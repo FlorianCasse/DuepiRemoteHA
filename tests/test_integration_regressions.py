@@ -522,6 +522,64 @@ def test_diagnostics_redacts_all_identifiers_and_exposes_connectivity_timing(
     assert "**REDACTED**" in serialized
 
 
+def test_diagnostics_expose_redacted_raw_cloud_device(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """Unread cloud fields are visible while device identifiers stay redacted."""
+    diagnostics = importlib.import_module("custom_components.duepi.diagnostics")
+    entry = _entry()
+    entry.runtime_data = SimpleNamespace(
+        data=None,
+        client=SimpleNamespace(
+            last_device_json={
+                "_id": "api-secret",
+                "univocalID": "device-secret",
+                "name": "Salon",
+                "deviceCurrentSettings": {
+                    "settedPower": "1",
+                    "workingPower": "3",
+                    "deviceId": "device-secret",
+                },
+            }
+        ),
+        raw_online=None,
+        filtered_online=None,
+        disconnect_elapsed_seconds=None,
+        last_update_success=True,
+        last_successful_update_time=None,
+    )
+
+    result = asyncio.run(diagnostics.async_get_config_entry_diagnostics(object(), entry))
+
+    settings = result["cloud_device"]["deviceCurrentSettings"]
+    assert settings["settedPower"] == "1"
+    assert settings["workingPower"] == "3"
+    assert "device-secret" not in repr(result)
+    assert "api-secret" not in repr(result)
+    assert result["cloud_device"]["name"] == "**REDACTED**"
+
+
+def test_diagnostics_without_cloud_device_data(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """Diagnostics before the first successful parse report no cloud device."""
+    diagnostics = importlib.import_module("custom_components.duepi.diagnostics")
+    entry = _entry()
+    entry.runtime_data = SimpleNamespace(
+        data=None,
+        client=SimpleNamespace(last_device_json=None),
+        raw_online=None,
+        filtered_online=None,
+        disconnect_elapsed_seconds=None,
+        last_update_success=False,
+        last_successful_update_time=None,
+    )
+
+    result = asyncio.run(diagnostics.async_get_config_entry_diagnostics(object(), entry))
+
+    assert result["cloud_device"] is None
+
+
 def test_diagnostics_reports_timestamp_only_after_successful_coordinator_poll(
     monkeypatch: pytest.MonkeyPatch, duepi_test_modules: SimpleNamespace
 ) -> None:
