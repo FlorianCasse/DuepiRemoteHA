@@ -663,3 +663,41 @@ def test_turn_off_without_power_falls_back_to_default_power_one(
     assert data["settedPower"] == "1"
     assert data["settedTemperature"] == "25"
     assert data["active"] == "0"
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["/", "/dashboard", "/devices", "/dashboard?saved=1", "https://dpremoteiot.com/dashboard"],
+)
+def test_command_post_redirect_get_is_accepted(
+    duepi_test_modules: SimpleNamespace, location: str
+) -> None:
+    """The cloud answers an accepted command with a redirect to a site page."""
+    api = duepi_test_modules.api
+    session = FakeSession([], [FakeResponse(302, headers={"Location": location})])
+    cloud_client = client(api, session)
+    cloud_client._authenticated = True
+
+    asyncio.run(cloud_client.async_turn_on(power=1, temperature=25))
+
+    assert len(session.post_calls) == 1
+    assert cloud_client._authenticated is True
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["/login", "/login?expired=1", "/login/", "https://dpremoteiot.com/login"],
+)
+def test_command_login_redirect_is_session_expiry(
+    duepi_test_modules: SimpleNamespace, location: str
+) -> None:
+    """A command redirected to login lost its session, relative or absolute."""
+    api = duepi_test_modules.api
+    session = FakeSession([], [FakeResponse(302, headers={"Location": location})])
+    cloud_client = client(api, session)
+    cloud_client._authenticated = True
+
+    with pytest.raises(api.DuepiSessionExpiredError):
+        asyncio.run(cloud_client.async_turn_off())
+
+    assert cloud_client._authenticated is False
