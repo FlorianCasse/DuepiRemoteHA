@@ -9,10 +9,18 @@ import logging
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import aiohttp
 
-from .const import DEFAULT_POWER, DEFAULT_TEMPERATURE, URL_DASHBOARD, URL_LOGIN, URL_SET_SETTINGS
+from .const import (
+    DEFAULT_POWER,
+    DEFAULT_TEMPERATURE,
+    URL_BASE,
+    URL_DASHBOARD,
+    URL_LOGIN,
+    URL_SET_SETTINGS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -407,6 +415,17 @@ class DuepiCloudClient:
         """Return whether a response redirect unambiguously targets login."""
         return location == "/login" or location.startswith("/login?")
 
+    @staticmethod
+    def _is_command_login_redirect(location: str) -> bool:
+        """Return whether a command redirect targets login, relative or absolute.
+
+        A command is never followed, so any other redirect is the form's
+        post/redirect/get; only a login target means the session was lost.
+        """
+        parts = urlsplit(location)
+        same_site = not parts.netloc or f"{parts.scheme}://{parts.netloc}" == URL_BASE
+        return same_site and parts.path.rstrip("/") == "/login"
+
     def _raise_for_http_error(
         self, response: aiohttp.ClientResponse, *, authentication_failure: bool = False
     ) -> None:
@@ -452,10 +471,17 @@ class DuepiCloudClient:
             ) as resp:
                 if 300 <= resp.status < 400:
                     location = resp.headers.get("Location", "")
-                    if self._is_login_redirect(location):
+                    if self._is_command_login_redirect(location):
                         self._authenticated = False
                         raise DuepiSessionExpiredError("Session expired during command")
-                    raise DuepiConnectionError("Unexpected redirect during command")
+                    # The web form answers an accepted command with a
+                    # post/redirect/get to a page of the site.
+                    _LOGGER.debug(
+                        "Command accepted (HTTP %d redirect to %s)",
+                        resp.status,
+                        urlsplit(location).path or "/",
+                    )
+                    return
                 self._raise_for_http_error(resp, authentication_failure=True)
                 _LOGGER.debug("Command sent successfully")
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
