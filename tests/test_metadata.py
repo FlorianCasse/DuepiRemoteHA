@@ -41,7 +41,7 @@ def test_release_metadata_is_consistent() -> None:
     """Manifest and HACS metadata agree on the v1.3 release contract."""
     manifest = _load_json(INTEGRATION / "manifest.json")
     hacs = _load_json(ROOT / "hacs.json")
-    assert manifest["version"] == "1.3.4"
+    assert manifest["version"] == "1.3.5"
     # GitHub's release-download redirect currently sends a >8 KiB header that
     # aiohttp (HACS) rejects, so HACS must fetch files instead of the zip asset.
     assert "zip_release" not in hacs

@@ -141,10 +141,16 @@ def _install_homeassistant_stubs(monkeypatch: pytest.MonkeyPatch, scheduler: _Sc
     components = ModuleType("homeassistant.components")
     diagnostics = ModuleType("homeassistant.components.diagnostics")
 
-    def async_redact_data(data: dict[str, object], keys: set[str]) -> dict[str, object]:
-        """Redact configured fields using Home Assistant's diagnostics marker."""
+    def async_redact_data(data: object, keys: set[str]) -> object:
+        """Redact configured fields recursively, like Home Assistant does."""
+        if isinstance(data, list):
+            return [async_redact_data(item, keys) for item in data]
+        if not isinstance(data, dict):
+            return data
         return {
-            key: "**REDACTED**" if key in keys and value is not None else value
+            key: "**REDACTED**"
+            if key in keys and value is not None
+            else async_redact_data(value, keys)
             for key, value in data.items()
         }
 

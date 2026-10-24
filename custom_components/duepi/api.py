@@ -197,11 +197,17 @@ class DuepiCloudClient:
         self._authenticated = False
         self._auth_lock = asyncio.Lock()
         self._api_device_id: str | None = None  # MongoDB ObjectId, resolved from dashboard
+        self._last_device_json: dict[str, object] | None = None
 
     @property
     def device_id(self) -> str | None:
         """Return the device ID."""
         return self._device_id
+
+    @property
+    def last_device_json(self) -> dict[str, object] | None:
+        """Return the raw device data from the most recent parsed dashboard."""
+        return self._last_device_json
 
     def select_device(self, device_id: str, api_id: str | None = None) -> None:
         """Select the stove used by state reads and commands."""
@@ -509,6 +515,9 @@ class DuepiCloudClient:
         if not isinstance(power_state, str) or power_state.upper() not in {"ON", "OFF"}:
             raise DuepiParseError("Configured device has invalid current settings")
 
+        # Kept unparsed for diagnostics: the cloud may expose fields the
+        # integration does not read yet (e.g. the power the stove runs at).
+        self._last_device_json = device_json
         api_id = device_json.get("_id")
         if isinstance(api_id, str) and api_id:
             self._api_device_id = api_id

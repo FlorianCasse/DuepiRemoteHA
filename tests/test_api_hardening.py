@@ -171,6 +171,33 @@ def test_wrong_device_id_never_fabricates_an_off_state(
         client(api, FakeSession([]))._parse_dashboard(dashboard("other-stove"))
 
 
+def test_parsed_dashboard_keeps_raw_device_data(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """Raw device data survives parsing so diagnostics can reveal unread fields."""
+    api = duepi_test_modules.api
+    cloud_client = client(api, FakeSession([]))
+    assert cloud_client.last_device_json is None
+
+    cloud_client._parse_dashboard(dashboard())
+
+    assert cloud_client.last_device_json["_id"] == API_ID
+    assert cloud_client.last_device_json["deviceCurrentSettings"]["status"] == "Heating"
+
+
+def test_rejected_dashboard_keeps_no_raw_device_data(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """A dashboard without the configured device is not exposed as its data."""
+    api = duepi_test_modules.api
+    cloud_client = client(api, FakeSession([]))
+
+    with pytest.raises(api.DuepiParseError):
+        cloud_client._parse_dashboard(dashboard("other-stove"))
+
+    assert cloud_client.last_device_json is None
+
+
 def test_state_parse_requires_a_selected_device(
     duepi_test_modules: SimpleNamespace,
 ) -> None:

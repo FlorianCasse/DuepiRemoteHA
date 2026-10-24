@@ -12,6 +12,29 @@ from homeassistant.core import HomeAssistant
 from .const import CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
 from .coordinator import DISCONNECT_GRACE_PERIOD, DuepiCoordinator
 
+# Identifying keys in the raw cloud device data; everything else is kept so
+# fields the integration does not read yet stay visible.
+_CLOUD_DEVICE_REDACT_KEYS = {
+    "_id",
+    "univocalID",
+    "deviceId",
+    "deviceID",
+    "owner",
+    "user",
+    "userId",
+    "email",
+    "name",
+    "deviceName",
+    "mac",
+    "macAddress",
+    "serial",
+    "serialNumber",
+    "ip",
+    "ssid",
+    "token",
+    "password",
+}
+
 
 def _safe_error_name(error: BaseException | None) -> str | None:
     """Return an error category without exposing error details."""
@@ -30,6 +53,8 @@ async def async_get_config_entry_diagnostics(
     coordinator: DuepiCoordinator = entry.runtime_data
     last_successful_update = coordinator.last_successful_update_time
     elapsed = coordinator.disconnect_elapsed_seconds
+    client = getattr(coordinator, "client", None)
+    cloud_device = getattr(client, "last_device_json", None)
 
     return {
         "config": async_redact_data(
@@ -42,6 +67,11 @@ async def async_get_config_entry_diagnostics(
             set(entry.data),
         ),
         "state": asdict(coordinator.data) if coordinator.data else None,
+        "cloud_device": (
+            async_redact_data(cloud_device, _CLOUD_DEVICE_REDACT_KEYS)
+            if cloud_device is not None
+            else None
+        ),
         "last_update_success": coordinator.last_update_success,
         "last_successful_update": (
             _serialize_datetime(last_successful_update)
