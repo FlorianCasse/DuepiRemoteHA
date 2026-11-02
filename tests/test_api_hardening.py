@@ -728,3 +728,89 @@ def test_command_login_redirect_is_session_expiry(
         asyncio.run(cloud_client.async_turn_off())
 
     assert cloud_client._authenticated is False
+
+
+def _settings_dashboard(**settings: object) -> str:
+    """Return a dashboard whose device reports the supplied current settings."""
+    return dashboard_devices(
+        [{"_id": API_ID, "univocalID": DEVICE_ID, "deviceCurrentSettings": settings}]
+    )
+
+
+@pytest.mark.parametrize(
+    ("power_state", "status", "thermostat_mode", "power_on", "flame_on"),
+    [
+        # Eco stand-by: flame out, stove still in service (issue #13).
+        ("OFF", "Room Temperature 22°C", "heat", True, False),
+        ("OFF", "Room Temperature 22°C", None, True, False),
+        # After a command sent during stand-by the cloud reports ON.
+        ("ON", "Room Temperature 22°C", "heat", True, False),
+        ("ON", "Heating,Room Temperature 23°C", "heat", True, True),
+        ("ON", "Igniction,Room Temperature 21°C", "heat", True, True),
+        ("OFF", "Stove Off,Room Temperature 21°C", "heat", False, False),
+        ("OFF", "Cooling,Room Temperature 25°C", "heat", False, False),
+        ("OFF", "Waiting...", "heat", False, False),
+        ("OFF", "Alarm Code 1 Stove Off,", "heat", False, False),
+        ("OFF", "Room Temperature 22°C", "off", False, False),
+        ("OFF", None, "heat", False, False),
+    ],
+)
+def test_eco_standby_is_on_with_the_flame_out(
+    duepi_test_modules: SimpleNamespace,
+    power_state: str,
+    status: str | None,
+    thermostat_mode: str | None,
+    power_on: bool,
+    flame_on: bool,
+) -> None:
+    """Only a bare room-temperature status is stand-by; a stopped stove stays off."""
+    api = duepi_test_modules.api
+    settings: dict[str, object] = {"powerState": power_state, "isOnline": True}
+    if status is not None:
+        settings["status"] = status
+    if thermostat_mode is not None:
+        settings["thermostatMode"] = thermostat_mode
+
+    state = client(api, FakeSession([]))._parse_dashboard(_settings_dashboard(**settings))
+
+    assert state.power_on is power_on
+    assert state.flame_on is flame_on
+
+
+def test_standby_with_an_alarm_is_off(duepi_test_modules: SimpleNamespace) -> None:
+    """An alarm field rules out stand-by even with a bare room-temperature status."""
+    api = duepi_test_modules.api
+    page = _settings_dashboard(
+        powerState="OFF", isOnline=True, status="Room Temperature 22°C", alarm="A01"
+    )
+
+    state = client(api, FakeSession([]))._parse_dashboard(page)
+
+    assert state.power_on is False
+
+
+def test_set_temperature_in_standby_keeps_the_stove_active(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """A target change in eco stand-by must not switch the stove off (issue #13)."""
+    api = duepi_test_modules.api
+    page = _settings_dashboard(
+        powerState="OFF",
+        isOnline=True,
+        status="Room Temperature 22°C",
+        thermostatMode="heat",
+        settedPower=1,
+        settedTemperature=16,
+    )
+    session = FakeSession([], [FakeResponse(200)])
+    cloud_client = client(api, session)
+    cloud_client._authenticated = True
+    state = cloud_client._parse_dashboard(page)
+
+    asyncio.run(cloud_client.async_set_temperature(18, current_state=state))
+
+    data = session.post_calls[0][1]["data"]
+    assert data["active"] == "1"
+    assert data["switch"] == "on"
+    assert data["settedTemperature"] == "18"
+    assert data["settedPower"] == "1"

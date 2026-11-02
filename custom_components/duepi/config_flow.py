@@ -282,7 +282,7 @@ class DuepiConfigFlow(ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
         """Return the options flow handler."""
-        return DuepiOptionsFlow(config_entry)
+        return DuepiOptionsFlow()
 
 
 class DuepiOptionsFlow(OptionsFlow):

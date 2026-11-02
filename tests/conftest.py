@@ -46,8 +46,9 @@ class _ConfigFlow:
 class _OptionsFlow:
     """Minimal OptionsFlow base for importing the configuration module."""
 
-    def __init__(self, config_entry: object | None = None) -> None:
-        self.config_entry = config_entry or SimpleNamespace(options={})
+    # Home Assistant >= 2024.12 constructs options flows without arguments
+    # and attaches the config entry itself.
+    config_entry: object = SimpleNamespace(options={})
 
     def async_show_form(self, **kwargs: object) -> dict[str, object]:
         return {"type": "form", **kwargs}

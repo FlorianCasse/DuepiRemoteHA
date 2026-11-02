@@ -174,9 +174,8 @@ def test_options_reject_an_inverted_pellet_range(
     duepi_test_modules: SimpleNamespace,
 ) -> None:
     """The configured minimum pellet rate cannot exceed the maximum."""
-    flow = duepi_test_modules.config_flow.DuepiOptionsFlow(
-        SimpleNamespace(options={})
-    )
+    flow = duepi_test_modules.config_flow.DuepiOptionsFlow()
+    flow.config_entry = SimpleNamespace(options={})
     options = {
         "scan_interval": 30,
         "default_power": 5,
@@ -197,9 +196,8 @@ def test_options_accept_a_valid_pellet_range(
     duepi_test_modules: SimpleNamespace,
 ) -> None:
     """Valid preset and consumption options are stored unchanged."""
-    flow = duepi_test_modules.config_flow.DuepiOptionsFlow(
-        SimpleNamespace(options={})
-    )
+    flow = duepi_test_modules.config_flow.DuepiOptionsFlow()
+    flow.config_entry = SimpleNamespace(options={})
     options = {
         "scan_interval": 60,
         "default_power": 4,
@@ -213,3 +211,16 @@ def test_options_accept_a_valid_pellet_range(
     result = asyncio.run(flow.async_step_init(options))
 
     assert result == {"type": "create_entry", "data": options}
+
+
+def test_options_flow_is_built_without_arguments(
+    duepi_test_modules: SimpleNamespace,
+) -> None:
+    """Opening the options must not pass the entry to the flow (issue #13)."""
+    config_flow = duepi_test_modules.config_flow
+
+    flow = config_flow.DuepiConfigFlow.async_get_options_flow(
+        SimpleNamespace(options={})
+    )
+
+    assert isinstance(flow, config_flow.DuepiOptionsFlow)

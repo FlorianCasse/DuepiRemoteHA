@@ -27,6 +27,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .accumulation import capped_elapsed_seconds, pellet_rate
+from .api import DuepiStoveState
 from .const import (
     CONF_DEVICE_ID,
     CONF_PELLET_KG_PER_HOUR_MAX,
@@ -179,6 +180,15 @@ class DuepiSensorEntity(CoordinatorEntity[DuepiCoordinator], SensorEntity):
         return self.entity_description.value_fn(self.coordinator)
 
 
+def _is_burning(state: DuepiStoveState | None) -> bool:
+    """Return whether the stove burns pellets; eco stand-by does not count."""
+    if state is None:
+        return False
+    if state.flame_on is not None:
+        return state.flame_on
+    return state.power_on
+
+
 class DuepiAccumulatingSensor(
     CoordinatorEntity[DuepiCoordinator], RestoreSensor
 ):
@@ -223,7 +233,7 @@ class DuepiAccumulatingSensor(
                 self._total = 0.0
 
         state = self.coordinator.data
-        self._previous_active = bool(state and state.power_on)
+        self._previous_active = _is_burning(state)
         self._previous_power = state.working_power if state else None
         self._last_tick = monotonic()
 
@@ -268,7 +278,7 @@ class DuepiAccumulatingSensor(
                 )
 
         state = self.coordinator.data
-        self._previous_active = bool(state and state.power_on)
+        self._previous_active = _is_burning(state)
         self._previous_power = state.working_power if state else None
         self._last_tick = now
         super()._handle_coordinator_update()
