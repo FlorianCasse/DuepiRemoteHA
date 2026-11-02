@@ -90,6 +90,8 @@ class DuepiClimateEntity(CoordinatorEntity[DuepiCoordinator], ClimateEntity):
         data = self.coordinator.data
         if not data or not data.power_on:
             return HVACAction.OFF
+        if data.flame_on is False:
+            return HVACAction.IDLE
 
         if data.status_text:
             status_lower = data.status_text.lower()

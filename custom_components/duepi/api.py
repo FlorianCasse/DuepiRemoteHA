@@ -169,6 +169,8 @@ class DuepiStoveState:
     raw_online: bool | None
     online: bool | None
     alarm: str | None = None
+    # False while the stove is in eco stand-by: in service, flame out.
+    flame_on: bool | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -523,16 +525,32 @@ class DuepiCloudClient:
             self._api_device_id = api_id
 
         online = _normalize_online(settings.get("isOnline"))
+        status = settings.get("status") if isinstance(settings.get("status"), str) else None
+        alarm = _extract_alarm(settings, device_json)
+
+        # In eco stand-by the cloud reports powerState OFF (or ON right after a
+        # command) and a bare "Room Temperature N°C" status, whereas a stove
+        # really off reads "Stove Off,Room Temperature N°C". Treating stand-by
+        # as off would make the next command send active=0 and stop it.
+        thermostat_mode = settings.get("thermostatMode")
+        standby = (
+            status is not None
+            and status.strip().lower().startswith("room temperature")
+            and alarm is None
+            and not (isinstance(thermostat_mode, str) and thermostat_mode.lower() == "off")
+        )
+        reported_on = power_state.upper() == "ON"
 
         return DuepiStoveState(
-            power_on=power_state.upper() == "ON",
-            status_text=settings.get("status") if isinstance(settings.get("status"), str) else None,
+            power_on=reported_on or standby,
+            status_text=status,
             room_temperature=_safe_float(settings.get("roomTemperature")),
             working_power=_safe_int(settings.get("settedPower")),
             set_temperature=_safe_int(settings.get("settedTemperature")),
             raw_online=online,
             online=online,
-            alarm=_extract_alarm(settings, device_json),
+            alarm=alarm,
+            flame_on=reported_on and not standby,
         )
 
     @staticmethod

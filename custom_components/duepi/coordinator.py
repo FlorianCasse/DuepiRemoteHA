@@ -139,8 +139,9 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
             state = await self.client.async_get_stove_state()
             state = self._filter_connectivity(state)
             _LOGGER.debug(
-                "Stove state: on=%s, status=%s, room=%s°C, set=%s°C, power=%s",
+                "Stove state: on=%s, flame=%s, status=%s, room=%s°C, set=%s°C, power=%s",
                 state.power_on,
+                state.flame_on,
                 state.status_text,
                 state.room_temperature,
                 state.set_temperature,
@@ -314,7 +315,7 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
             await self.client.async_turn_off()
         state = self.data
         if state:
-            self.async_set_updated_data(replace(state, power_on=False))
+            self.async_set_updated_data(replace(state, power_on=False, flame_on=False))
 
     async def async_set_power(self, power: int) -> None:
         """Set working power and refresh."""
