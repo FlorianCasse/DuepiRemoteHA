@@ -81,16 +81,16 @@ Once the integration is installed and HA has restarted:
 2. Select the stove discovered on your account. Selection is shown even when the account contains only one stove.
 3. Click **Submit**. A new **Duepi Pellet Stove** device appears with all its entities.
 
-**Duepi relay**
-
-1. Enter the relay server and port from the MyDPRemote app settings, and the device code from the module label.
-2. Click **Submit**. Home Assistant reads the stove once to check the code, then creates the device.
-
-The device code stays in the Home Assistant configuration; it is never logged and is redacted from diagnostics. "The stove did not answer with this device code" means the code is wrong; "Cannot reach the Duepi relay" means the server or port is wrong.
-
 If the dashboard format prevents automatic discovery, the flow falls back to a manual **Device ID** field. Existing installations keep their current device ID and do not need to be reconfigured.
 
 > **Authentication failed?** Double-check your email and password. Make sure you can log in to [dpremoteiot.com](https://dpremoteiot.com) with the same credentials in a browser.
+
+**Duepi relay**
+
+1. Enter the relay server and port from the MyDPRemote app settings, and the device code from the module label (4 to 32 letters or digits).
+2. Click **Submit**. Home Assistant reads the stove once to check the code, then creates the device.
+
+The device code stays in the Home Assistant configuration; it is never logged and is redacted from diagnostics. "The stove did not answer with this device code" most often means the code is wrong (a corrupted reply gives the same message); "Cannot reach the Duepi relay" most often means the server or port is wrong (a timeout, a dropped connection or an unreadable reply gives the same message, so retry once before changing the settings).
 
 ### Step 2 — Configure options (optional)
 
@@ -135,7 +135,7 @@ All entities are grouped under a single **Duepi Pellet Stove** device:
 
 With the relay transport, the **Power level** slider, sensor and presets follow the stove's own power setting, including changes made on the panel; **Real power** shows the level it runs at. Right after each brazier cleaning (about every 30 minutes) the stove restarts at power 1 for a few seconds before returning to its setting.
 
-The stove does not report its target temperature to the relay, so the thermostat shows the last target set from Home Assistant (initially the **Comfort/default temperature** option). A target changed on the stove panel is not visible in Home Assistant.
+The stove does not report its target temperature to the relay, so the thermostat shows the last target set from Home Assistant (initially the **Comfort/default temperature** option). This value is kept in memory only: after a Home Assistant restart, an integration reload or an option change, it returns to the Comfort/default temperature and a target waiting to be sent is dropped. A target changed on the stove panel is not visible in Home Assistant.
 
 The cloud can briefly report a healthy stove offline during its periodic heartbeat.
 The integration waits 120 seconds before publishing a disconnect, while restoring
@@ -151,7 +151,7 @@ The script can run **locally on your HA instance** or **remotely from your compu
 
 #### Local execution
 
-If you have direct access to the HA terminal (SSH add-on, console, etc.):
+If you have direct access to the HA terminal (SSH add-on, console, etc.), first copy `migrate.py` from the root of this repository to `/config/scripts/` (neither installation method above installs it), then run:
 
 ```bash
 python3 /config/scripts/migrate.py
@@ -270,7 +270,7 @@ If you prefer to migrate manually without the script:
    - The `command_line` switch and sensor entries referencing `stoveOnOff.py`
    - The `generic_thermostat` climate entry (if used)
 3. Restart Home Assistant.
-4. Add the integration via the UI with your dpremoteiot.com **email and password**.
+4. Add the integration via the UI, choose **dpremoteiot.com account**, and enter your dpremoteiot.com **email and password**.
 5. Delete `/config/scripts/stoveOnOff.py` and `/config/scripts/.env`.
 6. Update any automations using the entity mapping below.
 
@@ -294,7 +294,7 @@ On the Duepi module, a power command sent to a stopped stove starts the ignition
 - after a turn off from Home Assistant, refuses power changes until the stove is seen off or shutting down (10 minutes at most), so a late command cannot cancel the shutdown;
 - for one minute after the integration is loaded or reloaded, refuses starts and power changes (the safety state above is kept in memory only);
 - before changing the power, reads the phase and the real power in the same connection and refuses the command unless the stove is in stable heating ("The stove is not heating…"); a target temperature set while the stove is not in stable heating is held back and sent once it is;
-- never sends the target temperature to a stopped stove: on turn on it sends only the power command, then sends the target once the stove reaches stable heating. A target set while the stove is off is never sent to a stove started from its panel or MyDPRemote, which keeps its own target; a start from Home Assistant sends the default (Comfort) or preset target instead. The stove does not acknowledge a target temperature in a verifiable way, so Home Assistant cannot confirm it was applied;
+- never sends the target temperature to a stopped stove: on turn on it sends only the power command, then sends the target once the stove reaches stable heating, if it does so within an hour of that start. A target set while the stove is off is never sent to a stove started from its panel or MyDPRemote, which keeps its own target; a start from Home Assistant sends the default (Comfort) or preset target instead. A target changed while a stove started from Home Assistant is still igniting (within an hour of that start) is sent once it reaches stable heating. The stove does not acknowledge a target temperature in a verifiable way, so Home Assistant cannot confirm it was applied;
 - only sends a fixed list of commands (power 1-5, off, target temperature).
 
 One risk remains: if someone stops the stove from its panel or from MyDPRemote in the fraction of a second between that check and the command, the command can restart it. Home Assistant cannot rule this out; avoid changing the power from two places at the same moment.
@@ -319,11 +319,17 @@ Restart Home Assistant and view the logs:
 
 > **Note:** The **Settings → System → Logs** page only shows warnings and errors. Debug/info logs are only visible in the full log file or via `docker logs`.
 
+With the Duepi relay transport:
+
+- **The stove became unavailable after its device code or relay server changed** — a relay entry cannot be edited yet. Delete the entry in **Settings → Devices & Services → Duepi Pellet Stove**, then add it again with the new code, server and port.
+- **"The Duepi relay is busy; try again"** — another poll or command was still talking to the relay. Wait a few seconds and try again.
+
 ## Known Limitations
 
 - **Power level may be ignored on startup** — some stove models always start at a fixed power level regardless of the `settedPower` value. When the stove is turned on from Home Assistant, the integration re-sends the desired power once, when the stove first reports nominal heating, so the configured level applies after ignition. Stoves started from their panel or the vendor app are left alone. This only applies to the cloud transport: the relay reads the real power, so it does not need the re-send.
 - **Cloud dependency** — both transports require internet connectivity: dpremoteiot.com for the cloud transport, the Duepi relay server for the relay transport. Neither talks to the stove over the local network.
 - **Relay phases** — phase codes were mapped on one stove: off, ignition, stable heating, brazier cleaning and shutdown (shown as off while it cools down). Any other code shows as "Phase N" and is treated as not heating, so power and target changes are refused while it is shown. Please report the phase codes your stove goes through, especially on Hydro models.
 - **Relay and MyDPRemote** — Home Assistant opens a short connection to the relay at each poll (about 1 s every 30 s). Whether MyDPRemote keeps working at the same time has not been confirmed yet; please report it.
+- **No relay reconfigure step** — the server, port and device code of a relay entry cannot be changed in place; delete and re-add the entry.
 - **HTML scraping fallback** — state detection primarily uses JSON data embedded in the dashboard HTML, with regex parsing as a fallback. If dpremoteiot.com changes their layout, the integration may need updating.
 - **Estimated pellet use** — consumption is calculated from configured rates and observed power, not measured by the stove. Gaps are capped to avoid counting through long outages or restarts.
