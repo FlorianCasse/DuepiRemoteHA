@@ -12,11 +12,15 @@ import pytest
 class CommandClient:
     """Record combined turn-on commands and optionally fail them."""
 
+    # DuepiClient protocol attributes of the cloud transport.
+    transport_name = "dpremoteiot.com"
+    reports_real_power = False
+
     def __init__(self, *, fail: bool = False) -> None:
         self.calls: list[tuple[int, int]] = []
         self.fail = fail
 
-    async def async_turn_on(self, *, power: int, temperature: int) -> None:
+    async def async_turn_on(self, *, power: int, temperature: int, ignite: bool = False) -> None:
         self.calls.append((power, temperature))
         if self.fail:
             raise RuntimeError("command failed")

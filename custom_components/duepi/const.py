@@ -5,6 +5,13 @@ PLATFORMS = ["climate", "sensor", "binary_sensor", "number"]
 
 # Config entry data keys (CONF_EMAIL and CONF_PASSWORD come from homeassistant.const)
 CONF_DEVICE_ID = "device_id"
+CONF_TRANSPORT = "transport"
+CONF_DEVICE_CODE = "device_code"
+
+# Transports; entries created before the relay existed have no CONF_TRANSPORT.
+TRANSPORT_CLOUD = "cloud"
+TRANSPORT_RELAY = "relay"
+DEFAULT_RELAY_PORT = 3000
 
 # Options keys
 CONF_SCAN_INTERVAL = "scan_interval"

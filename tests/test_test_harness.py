@@ -31,11 +31,24 @@ class OptionsFlow:
     pass
 ''',
         "core.py": "class HomeAssistant:\n    pass\n\ndef callback(func):\n    return func\n",
-        "exceptions.py": "class ConfigEntryAuthFailed(Exception):\n    pass\n\nclass ConfigEntryNotReady(Exception):\n    pass\n",
-        "const.py": "CONF_EMAIL = 'email'\nCONF_PASSWORD = 'password'\n",
+        "exceptions.py": (
+            "class ConfigEntryAuthFailed(Exception):\n    pass\n\n"
+            "class ConfigEntryNotReady(Exception):\n    pass\n\n"
+            "class HomeAssistantError(Exception):\n"
+            "    def __init__(self, *args, **kwargs):\n        super().__init__(*args)\n"
+        ),
+        "const.py": (
+            "CONF_EMAIL = 'email'\nCONF_PASSWORD = 'password'\n"
+            "CONF_HOST = 'host'\nCONF_PORT = 'port'\n"
+        ),
         "data_entry_flow.py": "FlowResult = dict\n",
         "helpers/__init__.py": "",
         "helpers/event.py": "def async_call_later(*_args):\n    raise AssertionError('test scheduler was not installed')\n",
+        "helpers/selector.py": (
+            "class TextSelectorType:\n    PASSWORD = 'password'\n\n"
+            "def TextSelectorConfig(**kwargs):\n    return kwargs\n\n"
+            "def TextSelector(config=None):\n    return str\n"
+        ),
         "helpers/aiohttp_client.py": "def async_create_clientsession(*_args, **_kwargs):\n    return object()\n",
         "helpers/update_coordinator.py": '''\
 class DataUpdateCoordinator:

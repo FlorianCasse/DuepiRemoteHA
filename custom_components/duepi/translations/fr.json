@@ -3,11 +3,27 @@
   "config": {
     "step": {
       "user": {
+        "title": "Comment Home Assistant joint-il votre poêle ?",
+        "menu_options": {
+          "cloud": "Compte dpremoteiot.com",
+          "relay": "Relais Duepi (serveur MyDPRemote, lit la puissance réelle)"
+        }
+      },
+      "cloud": {
         "title": "Connexion à dpremoteiot.com",
         "description": "Entrez vos identifiants dpremoteiot.com. Vos poêles seront découverts automatiquement.",
         "data": {
           "email": "Email",
           "password": "Mot de passe"
+        }
+      },
+      "relay": {
+        "title": "Connexion via le relais Duepi",
+        "description": "Utilisez le serveur et le port affichés dans les réglages de l'application MyDPRemote, et le code appareil imprimé sur l'étiquette du module Wi-Fi. Le code reste dans Home Assistant et n'est jamais journalisé.",
+        "data": {
+          "host": "Serveur relais",
+          "port": "Port",
+          "device_code": "Code appareil"
         }
       },
       "select_device": {
@@ -39,7 +55,10 @@
       "cannot_connect": "Impossible de se connecter à dpremoteiot.com.",
       "server_error": "Le service dpremoteiot.com est temporairement indisponible.",
       "rate_limited": "Trop de requêtes vers dpremoteiot.com. Veuillez réessayer plus tard.",
-      "unknown": "Une erreur inattendue s'est produite."
+      "unknown": "Une erreur inattendue s'est produite.",
+      "relay_cannot_connect": "Impossible de joindre le relais Duepi. Vérifiez le serveur et le port affichés dans MyDPRemote.",
+      "relay_invalid_code": "Le poêle n'a pas répondu avec ce code appareil. Vérifiez le code sur l'étiquette du module Wi-Fi.",
+      "invalid_device_code": "Le code appareil fait 4 à 32 lettres ou chiffres, comme sur l'étiquette du module Wi-Fi."
     },
     "abort": {
       "already_configured": "Cet appareil est déjà configuré.",
@@ -90,6 +109,21 @@
       },
       "pellet_consumption": {
         "name": "Consommation de pellets (estimée)"
+      },
+      "real_power": {
+        "name": "Puissance réelle"
+      },
+      "fumes_temperature": {
+        "name": "Température des fumées"
+      },
+      "phase": {
+        "name": "Code de phase"
+      },
+      "error_code": {
+        "name": "Code d'erreur"
+      },
+      "power_setting": {
+        "name": "Puissance réglée"
       }
     },
     "binary_sensor": {
@@ -104,6 +138,14 @@
       "power_level": {
         "name": "Niveau de puissance"
       }
+    }
+  },
+  "exceptions": {
+    "stove_off": {
+      "message": "Le poêle n'est pas en chauffe. Allumez-le, ou attendez qu'il soit en chauffe stable, avant de changer la puissance."
+    },
+    "start_refused": {
+      "message": "Le poêle ne peut pas être allumé maintenant : il est occupé (nettoyage ou arrêt en cours), signale une erreur, ou un allumage a été demandé il y a moins d'une minute."
     }
   }
 }

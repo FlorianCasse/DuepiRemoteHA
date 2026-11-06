@@ -4,25 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from time import monotonic
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
     DuepiApiError,
     DuepiAuthError,
-    DuepiCloudClient,
+    DuepiClient,
     DuepiConnectionError,
     DuepiParseError,
     DuepiRateLimitError,
     DuepiServerError,
+    DuepiStartRefusedError,
+    DuepiStoveOffError,
     DuepiStoveState,
     DuepiTransportError,
 )
@@ -48,8 +51,23 @@ DISCONNECT_GRACE_PERIOD = 120
 MAX_ENFORCE_POWER_ATTEMPTS = 3
 
 
+@contextmanager
+def _stove_off_as_user_error() -> Iterator[None]:
+    """Show a transport's refused command as a clear, translated UI error."""
+    try:
+        yield
+    except DuepiStoveOffError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="stove_off"
+        ) from err
+    except DuepiStartRefusedError as err:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="start_refused"
+        ) from err
+
+
 class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
-    """Coordinator that polls dpremoteiot.com for stove state."""
+    """Coordinator that polls the stove through its transport client."""
 
     config_entry: ConfigEntry
 
@@ -57,7 +75,7 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         self,
         hass: HomeAssistant,
         config_entry: ConfigEntry,
-        client: DuepiCloudClient,
+        client: DuepiClient,
         update_interval: timedelta,
         *,
         default_power: int = DEFAULT_POWER,
@@ -73,6 +91,8 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         )
         self.config_entry = config_entry
         self.client = client
+        # Relay transports measure the real power; the cloud only echoes requests.
+        self._reports_real_power = client.reports_real_power
         self._default_power = default_power
         self._default_temperature = default_temperature
         self._eco_power = eco_power
@@ -133,7 +153,7 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         return max(0.0, monotonic() - self._disconnect_grace_started_at)
 
     async def _async_update_data(self) -> DuepiStoveState:
-        """Fetch stove state from dpremoteiot.com."""
+        """Fetch stove state from the transport."""
         _LOGGER.debug("Polling stove state")
         try:
             state = await self.client.async_get_stove_state()
@@ -179,13 +199,17 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
                 "Authentication failed. Please re-enter your credentials."
             ) from err
         except DuepiTransportError as err:
-            raise UpdateFailed(f"Cannot connect to dpremoteiot.com: {err}") from err
+            raise UpdateFailed(
+                f"Cannot connect to {self.client.transport_name}: {err}"
+            ) from err
         except DuepiServerError as err:
             raise UpdateFailed(f"Cloud service server error: {err}") from err
         except DuepiRateLimitError as err:
             raise UpdateFailed(f"Cloud service rate limit: {err}") from err
         except DuepiConnectionError as err:
-            raise UpdateFailed(f"Cloud service request failed: {err}") from err
+            raise UpdateFailed(
+                f"Request to {self.client.transport_name} failed: {err}"
+            ) from err
         except DuepiParseError as err:
             raise UpdateFailed(f"Failed to parse stove data: {err}") from err
 
@@ -289,8 +313,13 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         )
         self._desired_power = power
         _LOGGER.info("Turning stove ON (power=%d, temp=%d)", power, temperature)
-        await self.client.async_turn_on(power=power, temperature=temperature)
-        self._enforce_power_pending = True
+        with _stove_off_as_user_error():
+            await self.client.async_turn_on(
+                power=power, temperature=temperature, ignite=True
+            )
+        # Only the cloud needs the power re-sent after ignition: it cannot
+        # report the real level, the relay can.
+        self._enforce_power_pending = not self._reports_real_power
         self._enforce_seen_on = False
         self._enforce_attempts = 0
         self._pending_preset = None
@@ -321,7 +350,8 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
         """Set working power and refresh."""
         self._desired_power = power
         _LOGGER.info("Setting stove power to %d", power)
-        await self.client.async_set_power(power, current_state=self.data)
+        with _stove_off_as_user_error():
+            await self.client.async_set_power(power, current_state=self.data)
         state = self.data
         if state:
             self.async_set_updated_data(replace(state, working_power=power))
@@ -329,7 +359,8 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
     async def async_set_temperature(self, temperature: int) -> None:
         """Set target temperature and refresh."""
         _LOGGER.info("Setting stove temperature to %d°C", temperature)
-        await self.client.async_set_temperature(temperature, current_state=self.data)
+        with _stove_off_as_user_error():
+            await self.client.async_set_temperature(temperature, current_state=self.data)
         state = self.data
         if state:
             self.async_set_updated_data(replace(state, set_temperature=temperature))
@@ -372,7 +403,11 @@ class DuepiCoordinator(DataUpdateCoordinator[DuepiStoveState]):
 
         power, temperature = targets
         self._desired_power = power
-        await self.client.async_turn_on(power=power, temperature=temperature)
+        # The stove was on at the last poll; never let a preset start it.
+        with _stove_off_as_user_error():
+            await self.client.async_turn_on(
+                power=power, temperature=temperature, ignite=False
+            )
         self.async_set_updated_data(
             replace(
                 state,
