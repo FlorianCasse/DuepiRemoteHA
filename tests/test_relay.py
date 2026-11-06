@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -32,6 +33,21 @@ def relay(duepi_test_modules: SimpleNamespace, monkeypatch: pytest.MonkeyPatch):
     module = duepi_test_modules.relay
     monkeypatch.setattr(module, "LOGIN_DELAY", 0)
     return module
+
+
+@pytest.fixture(autouse=True)
+def _device_code_never_logged(caplog: pytest.LogCaptureFixture):
+    """protects=the device code never reaches any log line in any relay test
+    (spec AC6); fails_when=a log call formats the code or the login line;
+    no_claim=Home Assistant's own logging of entry data."""
+    caplog.set_level(logging.DEBUG)
+    yield
+    # caplog.text only holds the current (teardown) phase: read the test's records.
+    messages = [
+        record.getMessage() for phase in ("setup", "call") for record in caplog.get_records(phase)
+    ]
+    for code in (CODE, OTHER_CODE):
+        assert not any(code in message for message in messages)
 
 
 class FakeRelay:
@@ -171,6 +187,8 @@ def test_decode_frame_rejects_garbage(relay) -> None:
     "command", ["RF0000", "RF0010", "RF0030", "RF0050", "RF2150", "RF2FF0"]
 )
 def test_allowed_writes(relay, command: str) -> None:
+    """protects=every command the client needs stays sendable (off, P1-P5,
+    setpoints); fails_when=the allow-list is narrowed by mistake; no_claim=none."""
     assert relay.validate_write(command) == command
 
 
@@ -268,6 +286,8 @@ def test_unsolicited_cleartext_frames_are_skipped(relay) -> None:
 
 
 def test_read_register_rejects_writes(relay) -> None:
+    """protects=the read helper cannot be used to send a write; fails_when=the
+    read-command check is removed; no_claim=none beyond protects."""
     client = relay.DuepiRelayClient("127.0.0.1", 1, CODE)
     with pytest.raises(ValueError):
         run(client.async_read_register("RF0010"))
@@ -396,6 +416,8 @@ def test_relay_step_creates_an_entry_with_a_derived_device_id(
 
 
 def test_relay_step_reports_a_wrong_code(duepi_test_modules: SimpleNamespace, relay) -> None:
+    """protects=a wrong device code shows relay_invalid_code; fails_when=decrypt
+    failures map to another error; no_claim=real relay behaviour for unknown codes."""
     flow = duepi_test_modules.config_flow.DuepiConfigFlow()
 
     async def scenario():
@@ -411,6 +433,8 @@ def test_relay_step_reports_a_wrong_code(duepi_test_modules: SimpleNamespace, re
 def test_relay_step_reports_an_unreachable_relay(
     duepi_test_modules: SimpleNamespace, relay
 ) -> None:
+    """protects=a closed port shows relay_cannot_connect; fails_when=connection
+    errors map to another key; no_claim=DNS failures."""
     async def closed_port() -> int:
         server = await asyncio.start_server(lambda *_: None, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
@@ -735,6 +759,8 @@ def test_malformed_relay_output_is_a_transport_error_not_a_wrong_code(
 def test_relay_step_rejects_malformed_device_codes(
     duepi_test_modules: SimpleNamespace, code
 ) -> None:
+    """protects=codes that would corrupt the login line never reach the relay;
+    fails_when=the format check is removed or loosened; no_claim=real label formats."""
     flow = duepi_test_modules.config_flow.DuepiConfigFlow()
     result = run(flow.async_step_relay({"host": "127.0.0.1", "port": 1, "device_code": code}))
     assert result["type"] == "form"
@@ -980,3 +1006,89 @@ def test_shutdown_phase_reads_as_off(relay) -> None:
         assert state.flame_on is False
         assert state.status_text == "Shutdown"
     assert not relay.is_running(0x0801, 1)
+
+
+
+# --- Coverage audit gaps (ship, 2026-11-06) -----------------------------------
+
+
+def test_hung_connect_is_a_retryable_transport_error(
+    relay, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """protects=a relay that never accepts the connection yields a retryable
+    DuepiTransportError; fails_when=the TimeoutError clause is removed or placed
+    after OSError (TimeoutError is an OSError); no_claim=real network timing."""
+
+    async def hang(*_args: object, **_kwargs: object):
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(relay, "CONNECT_TIMEOUT", 0.1)
+    monkeypatch.setattr(relay.asyncio, "open_connection", hang)
+    client = relay.DuepiRelayClient("127.0.0.1", 1, CODE)
+    with pytest.raises(relay.DuepiTransportError) as err:
+        run(client.async_read_register("RD9000"))
+    assert CODE not in str(err.value)
+
+
+def test_connection_reset_mid_exchange_is_a_transport_error(
+    relay, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """protects=a reset during an exchange becomes DuepiTransportError without the
+    device code; fails_when=the ConnectionError/OSError wrapper is removed;
+    no_claim=real reset timing (exchange patched)."""
+
+    async def reset(self, command: str) -> str:
+        raise ConnectionResetError(f"reset during {command}")
+
+    async def scenario():
+        async with FakeRelay(relay) as server:
+            monkeypatch.setattr(relay._Session, "exchange", reset)
+            await _client(relay, server).async_read_register("RD9000")
+
+    with pytest.raises(relay.DuepiTransportError) as err:
+        run(scenario())
+    assert not isinstance(err.value, relay.DuepiProtocolError)
+    assert CODE not in str(err.value)
+
+
+def test_duplicate_relay_entry_aborts_before_any_relay_traffic(
+    duepi_test_modules: SimpleNamespace, relay
+) -> None:
+    """protects=adding the same device code twice aborts before contacting the
+    relay; fails_when=the unique-id check is removed or moved after validation;
+    no_claim=Home Assistant's flow manager (abort stubbed to raise)."""
+
+    class AlreadyConfigured(Exception):
+        pass
+
+    flow = duepi_test_modules.config_flow.DuepiConfigFlow()
+
+    def abort_if_configured() -> None:
+        if flow._unique_id == relay.relay_device_id(CODE):
+            raise AlreadyConfigured
+
+    flow._abort_if_unique_id_configured = abort_if_configured
+
+    async def scenario():
+        async with FakeRelay(relay) as server:
+            with pytest.raises(AlreadyConfigured):
+                await flow.async_step_relay(_relay_input(server.port))
+            return server
+
+    assert run(scenario()).connections == 0
+
+
+def test_unexpected_validation_error_shows_unknown(
+    duepi_test_modules: SimpleNamespace, relay, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """protects=an unexpected error during relay validation shows the "unknown"
+    form error instead of crashing the flow; fails_when=the broad except is
+    removed or remapped; no_claim=logging output content."""
+
+    async def boom(self, register: str) -> int:
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(relay.DuepiRelayClient, "async_read_register", boom)
+    flow = duepi_test_modules.config_flow.DuepiConfigFlow()
+    result = run(flow.async_step_relay(_relay_input(1)))
+    assert result["errors"] == {"base": "unknown"}
