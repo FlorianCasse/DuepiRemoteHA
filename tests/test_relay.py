@@ -968,3 +968,15 @@ def test_queued_setpoint_is_skipped_when_the_poll_is_short_of_time(
     server, state = run(scenario())
     assert state.phase == 0x0201
     assert _writes(server) == []
+
+
+def test_shutdown_phase_reads_as_off(relay) -> None:
+    """protects=the climate entity shows off while the stove cools down after a
+    turn-off (phase 0x0801 observed 2026-11-06); fails_when=shutdown is treated as
+    an unknown, powered-on phase; no_claim=other shutdown sub-codes beyond 0x08xx."""
+    for phase in (0x0801, 0x0802):
+        state = relay.state_from_registers({**OFF_REGISTERS, "RD9000": phase, "RD0000": 155})
+        assert state.power_on is False
+        assert state.flame_on is False
+        assert state.status_text == "Shutdown"
+    assert not relay.is_running(0x0801, 1)

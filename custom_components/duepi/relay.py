@@ -100,18 +100,22 @@ class PhaseInfo:
     # True only for stable heating phases where a power change is safe.
     running: bool
     flame_on: bool
+    # False when Home Assistant should show the stove as off.
+    power_on: bool = True
 
 
 PHASE_OFF = 0
 PHASE_HEATING = 0x0201
 STAGE_IGNITION = 0x01  # High byte of every ignition phase code (0x01xx).
+STAGE_SHUTDOWN = 0x08  # High byte of the shutdown phase (0x0801 observed).
+SHUTDOWN = PhaseInfo(label="Shutdown", running=False, flame_on=False, power_on=False)
 
 # Codes observed on a real stove (2026-11-06). The high byte is the stage.
 # Only stable heating is "running": power and setpoint writes are refused in
 # every other phase, including unknown ones. Labels keep the keywords that
 # climate.py and state_has_problem() parse ("heating", "idle", ...).
 PHASES: dict[int, PhaseInfo] = {
-    PHASE_OFF: PhaseInfo(label="Off", running=False, flame_on=False),
+    PHASE_OFF: PhaseInfo(label="Off", running=False, flame_on=False, power_on=False),
     0x0101: PhaseInfo(label="Ignition", running=False, flame_on=True),
     0x0102: PhaseInfo(label="Ignition", running=False, flame_on=True),
     0x0104: PhaseInfo(label="Ignition", running=False, flame_on=True),
@@ -201,9 +205,16 @@ def setpoint_command(temperature: int) -> str:
     return validate_write(f"RF2{temperature:02X}0")
 
 
+def phase_info(phase: int) -> PhaseInfo | None:
+    """Return the meaning of a phase code; every 0x08xx code is shutdown."""
+    if phase >> 8 == STAGE_SHUTDOWN:
+        return SHUTDOWN
+    return PHASES.get(phase)
+
+
 def is_running(phase: int, real_power: int) -> bool:
     """Return True only when a power or setpoint write is safe (stable heating)."""
-    info = PHASES.get(phase)
+    info = phase_info(phase)
     return bool(info and info.running) and real_power >= 1
 
 
@@ -216,12 +227,12 @@ def state_from_registers(
     value Home Assistant sent (or will send), supplied by the client.
     """
     phase = registers[REG_PHASE]
-    info = PHASES.get(phase)
+    info = phase_info(phase)
     power_setting = registers[REG_POWER_SETTING]
     real_power = registers[REG_REAL_POWER]
     error_code = registers[REG_ERROR]
     return DuepiStoveState(
-        power_on=phase != PHASE_OFF,
+        power_on=info.power_on if info else True,
         status_text=info.label if info else f"Phase {phase}",
         room_temperature=registers[REG_ROOM_TEMPERATURE] / 10,
         working_power=power_setting or None,
