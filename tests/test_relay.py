@@ -681,6 +681,49 @@ def test_setpoint_set_while_stopped_waits_for_an_ha_start(relay) -> None:
     assert _writes(server) == ["RF2140"]
 
 
+@pytest.mark.parametrize("phase", [0x0401, 0x0200, 0x0402])  # 0x0402: unlisted
+def test_setpoint_set_during_a_heating_cleaning_is_sent_once_heating(relay, phase) -> None:
+    """protects=a setpoint set while a heating stove cleans its brazier reaches the
+    stove at the next heating poll (ship review pass 2); fails_when=it waits for an
+    HA start that never comes while HA shows it as the target; no_claim=none."""
+
+    async def scenario():
+        async with FakeRelay(relay) as server:
+            server.registers.update(HEATING_REGISTERS)
+            client = _client(relay, server)
+            server.registers.update(RD9000=phase)
+            await client.async_set_temperature(22)
+            queued = list(_writes(server))
+            server.registers.update(HEATING_REGISTERS)
+            await client.async_get_stove_state()
+            return server, queued
+
+    server, queued = run(scenario())
+    assert queued == []
+    assert _writes(server) == ["RF2160"]
+
+
+def test_panel_restart_after_an_old_ha_start_keeps_the_panel_setpoint(relay) -> None:
+    """protects=only an HA start made after the setpoint was queued releases it
+    (ship review pass 2); fails_when=an earlier HA start sends the held setpoint
+    after a panel restart; no_claim=none beyond protects."""
+
+    async def scenario():
+        async with FakeRelay(relay) as server:
+            client = _client(relay, server)
+            await client.async_turn_on(power=2, temperature=21, ignite=True)
+            server.registers.update(HEATING_REGISTERS)
+            await client.async_get_stove_state()  # sends 21 C
+            server.registers.update(OFF_REGISTERS)  # stopped from the panel
+            await client.async_get_stove_state()
+            await client.async_set_temperature(22)  # held for an HA start
+            server.registers.update(HEATING_REGISTERS)  # restarted from the panel
+            await client.async_get_stove_state()
+            return server
+
+    assert _writes(run(scenario())) == ["RF0020", "RF2150"]
+
+
 def test_turn_off_sends_off_and_drops_the_queued_setpoint(relay) -> None:
     async def scenario():
         async with FakeRelay(relay) as server:

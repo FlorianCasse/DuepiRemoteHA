@@ -373,6 +373,8 @@ class DuepiRelayClient:
         self._started_at = time.monotonic()
         # True when the pending setpoint waits for a Home Assistant start.
         self._setpoint_needs_start = False
+        # When the pending setpoint was queued (monotonic time).
+        self._setpoint_queued_at = 0.0
         # Event-loop time by which the running operation must finish.
         self._deadline = 0.0
 
@@ -467,16 +469,18 @@ class DuepiRelayClient:
                 ):
                     raise DuepiStartRefusedError("A start was requested less than a minute ago")
                 if temperature is not None:
-                    self._queue_setpoint(temperature)
+                    # Queued as of this start, so this start releases it.
+                    self._queue_setpoint(temperature, queued_at=now)
                 # Recorded before sending: a lost reply may still mean "started".
                 self._last_ignition = now
                 # The power command ignites; the setpoint follows once heating.
                 await _write(session, power_write)
                 return
             if phase >> 8 == STAGE_IGNITION:
-                # Already igniting: nothing to send, the setpoint follows.
+                # Already igniting: nothing to send; the user asked HA to turn
+                # it on, so the setpoint follows once heating.
                 if temperature is not None:
-                    self._queue_setpoint(temperature)
+                    self._queue_setpoint(temperature, needs_start=False)
                 return
             raise DuepiStartRefusedError(
                 f"Stove is busy (phase {phase}); not starting it now"
@@ -520,17 +524,41 @@ class DuepiRelayClient:
             if self._writable(phase, real_power):
                 await self._send_setpoint(session, temperature, setpoint_write)
             else:
-                self._queue_setpoint(temperature)
+                # A heating stove that is only briefly unwritable (cleaning,
+                # startup guard) gets the setpoint at the next heating poll; a
+                # stopped, igniting or shutting-down one waits for an HA start.
+                self._queue_setpoint(
+                    temperature, needs_start=not self._heating_stage(phase)
+                )
 
         await self._run(_set_temperature)
 
     def _in_startup_guard(self) -> bool:
         return time.monotonic() - self._started_at < STARTUP_GUARD
 
-    def _queue_setpoint(self, temperature: int) -> None:
-        """Hold a setpoint for the next Home Assistant start."""
+    def _heating_stage(self, phase: int) -> bool:
+        """True unless the stove is off, igniting, shutting down or latched off.
+
+        Unknown codes count as heating stage: the setpoint is still only sent in
+        stable heating, so this only decides whether it waits for an HA start.
+        """
+        return (
+            self._off_latched_at is None
+            and phase != PHASE_OFF
+            and phase >> 8 not in (STAGE_IGNITION, STAGE_SHUTDOWN)
+        )
+
+    def _queue_setpoint(
+        self,
+        temperature: int,
+        *,
+        needs_start: bool = True,
+        queued_at: float | None = None,
+    ) -> None:
+        """Hold a setpoint until heating, or until the next Home Assistant start."""
         self._setpoint, self._setpoint_pending = temperature, True
-        self._setpoint_needs_start = True
+        self._setpoint_needs_start = needs_start
+        self._setpoint_queued_at = time.monotonic() if queued_at is None else queued_at
 
     def _queued_setpoint_due(self) -> bool:
         """A failed write is retried; a held setpoint waits for an HA start."""
@@ -538,8 +566,10 @@ class DuepiRelayClient:
             return False
         if not self._setpoint_needs_start:
             return True
+        # Only a start made by Home Assistant after the setpoint was queued.
         return (
             self._last_ignition is not None
+            and self._last_ignition >= self._setpoint_queued_at
             and time.monotonic() - self._last_ignition < QUEUED_SETPOINT_WINDOW
         )
 
