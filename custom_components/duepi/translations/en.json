@@ -19,7 +19,7 @@
       },
       "relay": {
         "title": "Connect through the Duepi relay",
-        "description": "Use the server and port shown in the MyDPRemote app settings, and the device code printed on the Wi-Fi module label. The code stays in Home Assistant and is never logged.",
+        "description": "Use the server and port shown in the MyDPRemote app settings, and the device code printed on the Wi-Fi module label. The code stays in Home Assistant and is never logged, but the Duepi protocol sends it unencrypted to the relay: treat it like a password.",
         "data": {
           "host": "Relay server",
           "port": "Port",
@@ -145,7 +145,7 @@
       "message": "The stove is not heating. Turn it on, or wait for it to reach stable heating, before changing the power."
     },
     "start_refused": {
-      "message": "The stove cannot be started now: it is busy (cleaning or shutting down), reports an error, or a start was requested less than a minute ago."
+      "message": "The stove cannot be started now: it is busy (cleaning or shutting down), reports an error, a start was requested less than a minute ago, or the integration was loaded less than a minute ago."
     }
   }
 }

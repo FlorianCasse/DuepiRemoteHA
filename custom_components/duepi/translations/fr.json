@@ -19,7 +19,7 @@
       },
       "relay": {
         "title": "Connexion via le relais Duepi",
-        "description": "Utilisez le serveur et le port affichés dans les réglages de l'application MyDPRemote, et le code appareil imprimé sur l'étiquette du module Wi-Fi. Le code reste dans Home Assistant et n'est jamais journalisé.",
+        "description": "Utilisez le serveur et le port affichés dans les réglages de l'application MyDPRemote, et le code appareil imprimé sur l'étiquette du module Wi-Fi. Le code reste dans Home Assistant et n'est jamais journalisé, mais le protocole Duepi l'envoie en clair au relais : traitez-le comme un mot de passe.",
         "data": {
           "host": "Serveur relais",
           "port": "Port",
@@ -145,7 +145,7 @@
       "message": "Le poêle n'est pas en chauffe. Allumez-le, ou attendez qu'il soit en chauffe stable, avant de changer la puissance."
     },
     "start_refused": {
-      "message": "Le poêle ne peut pas être allumé maintenant : il est occupé (nettoyage ou arrêt en cours), signale une erreur, ou un allumage a été demandé il y a moins d'une minute."
+      "message": "Le poêle ne peut pas être allumé maintenant : il est occupé (nettoyage ou arrêt en cours), signale une erreur, un allumage a été demandé il y a moins d'une minute, ou l'intégration a été chargée il y a moins d'une minute."
     }
   }
 }

@@ -43,6 +43,7 @@ from .const import (
     MAX_TEMPERATURE,
     MIN_POWER,
     MIN_TEMPERATURE,
+    RELAY_DEVICE_PREFIX,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,6 +66,17 @@ IGNITION_COOLDOWN = 60.0
 # After a turn-off the power stays locked until the stove leaves heating, or
 # this long at most (a stove that ignored the command is usable again).
 OFF_LATCH_TIMEOUT = 600.0
+# A fresh client (integration loaded or reloaded) refuses ignition and power
+# writes this long: the turn-off latch and the ignition cooldown live in memory
+# and a reload would otherwise drop them.
+STARTUP_GUARD = 60.0
+# A command waits at most this long for the relay before giving up, so commands
+# cannot pile up in front of a turn-off.
+LOCK_WAIT = 20.0
+# A setpoint queued while the stove was stopped is only sent after a start
+# requested by Home Assistant within this window; a start from the panel or
+# MyDPRemote keeps its own setpoint.
+QUEUED_SETPOINT_WINDOW = 3600.0
 _MAX_FRAME_BYTES = 512
 
 _READ_COMMAND = re.compile(r"^R[CD][0-9A-F]{4}$")
@@ -138,7 +150,7 @@ def checksum(text: str) -> str:
 
 def relay_device_id(device_code: str) -> str:
     """Return a stable identifier that does not reveal the device code."""
-    return "relay_" + hashlib.sha256(device_code.encode()).hexdigest()[:8]
+    return RELAY_DEVICE_PREFIX + hashlib.sha256(device_code.encode()).hexdigest()[:8]
 
 
 def encode_frame(key: bytes, command: str, iv: bytes | None = None) -> bytes:
@@ -358,6 +370,9 @@ class DuepiRelayClient:
         # leave stable heating, so a command cannot cancel the shutdown.
         self._off_latched_at: float | None = None
         self._last_ignition: float | None = None
+        self._started_at = time.monotonic()
+        # True when the pending setpoint waits for a Home Assistant start.
+        self._setpoint_needs_start = False
         # Event-loop time by which the running operation must finish.
         self._deadline = 0.0
 
@@ -374,21 +389,29 @@ class DuepiRelayClient:
 
         async def _poll(session: _Session) -> dict[str, int]:
             registers = await _read(session, POLLED_REGISTERS)
-            if registers[REG_PHASE] != PHASE_HEATING:
+            info = phase_info(registers[REG_PHASE])
+            if info is not None and not info.power_on:
+                # Off or shutting down: the turn-off has taken effect.
                 self._off_latched_at = None
             time_left = self._deadline - asyncio.get_running_loop().time()
             if (
-                self._setpoint_pending
-                and time_left > FRAME_TIMEOUT
+                self._queued_setpoint_due()
+                and time_left > 3 * FRAME_TIMEOUT
                 and self._writable(registers[REG_PHASE], registers[REG_REAL_POWER])
             ):
                 try:
+                    # Re-read right before writing: the reads above take time.
+                    phase, real_power = (
+                        await _read(session, (REG_PHASE, REG_REAL_POWER))
+                    ).values()
+                    if not self._writable(phase, real_power):
+                        return registers
                     await _write(session, setpoint_command(self._setpoint))
                 except (DuepiApiError, ConnectionError, OSError) as err:
                     # Keep the state just read; retry on the next poll.
                     _LOGGER.warning("Queued setpoint not delivered, will retry: %s", err)
                 else:
-                    self._setpoint_pending = False
+                    self._setpoint_pending = self._setpoint_needs_start = False
                     _LOGGER.debug("Sent the queued setpoint %d", self._setpoint)
             return registers
 
@@ -430,6 +453,8 @@ class DuepiRelayClient:
                 return
             if not ignite:
                 raise DuepiStoveOffError("The stove is not heating; refusing to start it")
+            if self._in_startup_guard():
+                raise DuepiStartRefusedError("Integration just loaded; not starting yet")
             if phase == PHASE_OFF:
                 if error or real_power:
                     raise DuepiStartRefusedError(
@@ -442,7 +467,7 @@ class DuepiRelayClient:
                 ):
                     raise DuepiStartRefusedError("A start was requested less than a minute ago")
                 if temperature is not None:
-                    self._setpoint, self._setpoint_pending = temperature, True
+                    self._queue_setpoint(temperature)
                 # Recorded before sending: a lost reply may still mean "started".
                 self._last_ignition = now
                 # The power command ignites; the setpoint follows once heating.
@@ -451,7 +476,7 @@ class DuepiRelayClient:
             if phase >> 8 == STAGE_IGNITION:
                 # Already igniting: nothing to send, the setpoint follows.
                 if temperature is not None:
-                    self._setpoint, self._setpoint_pending = temperature, True
+                    self._queue_setpoint(temperature)
                 return
             raise DuepiStartRefusedError(
                 f"Stove is busy (phase {phase}); not starting it now"
@@ -464,7 +489,7 @@ class DuepiRelayClient:
 
         async def _turn_off(session: _Session) -> None:
             # Locked before sending: a lost reply may still mean "shutting down".
-            self._setpoint_pending = False
+            self._setpoint_pending = self._setpoint_needs_start = False
             self._off_latched_at = time.monotonic()
             await _write(session, validate_write("RF0000"))
 
@@ -495,12 +520,33 @@ class DuepiRelayClient:
             if self._writable(phase, real_power):
                 await self._send_setpoint(session, temperature, setpoint_write)
             else:
-                self._setpoint, self._setpoint_pending = temperature, True
+                self._queue_setpoint(temperature)
 
         await self._run(_set_temperature)
 
+    def _in_startup_guard(self) -> bool:
+        return time.monotonic() - self._started_at < STARTUP_GUARD
+
+    def _queue_setpoint(self, temperature: int) -> None:
+        """Hold a setpoint for the next Home Assistant start."""
+        self._setpoint, self._setpoint_pending = temperature, True
+        self._setpoint_needs_start = True
+
+    def _queued_setpoint_due(self) -> bool:
+        """A failed write is retried; a held setpoint waits for an HA start."""
+        if not self._setpoint_pending:
+            return False
+        if not self._setpoint_needs_start:
+            return True
+        return (
+            self._last_ignition is not None
+            and time.monotonic() - self._last_ignition < QUEUED_SETPOINT_WINDOW
+        )
+
     def _writable(self, phase: int, real_power: int) -> bool:
         """Power and setpoint writes need stable heating and no pending turn-off."""
+        if self._in_startup_guard():
+            return False
         if (
             self._off_latched_at is not None
             and time.monotonic() - self._off_latched_at > OFF_LATCH_TIMEOUT
@@ -517,12 +563,17 @@ class DuepiRelayClient:
     ) -> None:
         """Send a setpoint; it stays queued (and retried) until a write succeeds."""
         self._setpoint, self._setpoint_pending = temperature, True
+        self._setpoint_needs_start = False
         await _write(session, command or setpoint_command(temperature))
         self._setpoint_pending = False
 
     async def _run(self, operation: Callable[[_Session], Awaitable[_T]]) -> _T:
         """Run one operation on a fresh connection, under the lock and time cap."""
-        async with self._lock:
+        try:
+            await asyncio.wait_for(self._lock.acquire(), LOCK_WAIT)
+        except TimeoutError as err:
+            raise DuepiTransportError("The Duepi relay is busy; try again") from err
+        try:
             self._deadline = asyncio.get_running_loop().time() + OPERATION_TIMEOUT
             try:
                 async with asyncio.timeout(OPERATION_TIMEOUT):
@@ -531,6 +582,8 @@ class DuepiRelayClient:
                 raise DuepiTransportError(
                     f"Relay operation exceeded {OPERATION_TIMEOUT:.0f} s"
                 ) from err
+        finally:
+            self._lock.release()
 
     async def _run_connected(self, operation: Callable[[_Session], Awaitable[_T]]) -> _T:
         try:

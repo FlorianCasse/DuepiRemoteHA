@@ -32,6 +32,8 @@ def relay(duepi_test_modules: SimpleNamespace, monkeypatch: pytest.MonkeyPatch):
     """Relay module with test-speed timings."""
     module = duepi_test_modules.relay
     monkeypatch.setattr(module, "LOGIN_DELAY", 0)
+    # Tests drive a fresh client at once; the startup guard has its own tests.
+    monkeypatch.setattr(module, "STARTUP_GUARD", 0)
     return module
 
 
@@ -75,6 +77,8 @@ class FakeRelay:
         self.greeting = b""
         # Raw bytes sent instead of every reply (malformed relay output).
         self.raw_reply: bytes | None = None
+        # Called with each command after it is recorded (simulate the stove changing).
+        self.on_command = None
         self.server: asyncio.AbstractServer | None = None
         self.port = 0
 
@@ -104,6 +108,8 @@ class FakeRelay:
                     command = plaintext[:6]
                     assert plaintext[6:] == self.relay.checksum(command)
                 self.commands.append(command)
+                if self.on_command is not None:
+                    self.on_command(command)
                 if self.close_after is not None and len(self.commands) > self.close_after:
                     return
                 await asyncio.sleep(self.reply_delay)
@@ -650,9 +656,10 @@ def test_preset_on_a_heating_stove_sends_power_then_setpoint(relay) -> None:
     assert state.set_temperature == 18
 
 
-def test_setpoint_is_queued_while_stopped_and_sent_once_heating(relay) -> None:
-    """protects=no setpoint reaches a stopped stove (D15) and HA shows the last
-    value it set (D16); fails_when=RF2xx0 is sent while off or the queue is lost;
+def test_setpoint_set_while_stopped_waits_for_an_ha_start(relay) -> None:
+    """protects=no setpoint reaches a stopped stove (D15), HA shows the last value
+    it set (D16), and a stove later started from its panel keeps its own setpoint
+    (ship red team); fails_when=RF2xx0 is sent while off or after a panel start;
     no_claim=whether the stove applied it (not readable)."""
 
     async def scenario():
@@ -661,17 +668,17 @@ def test_setpoint_is_queued_while_stopped_and_sent_once_heating(relay) -> None:
             first = await client.async_get_stove_state()
             await client.async_set_temperature(19)
             while_off = await client.async_get_stove_state()
-            writes_while_off = list(_writes(server))
-            server.registers.update(HEATING_REGISTERS)
+            server.registers.update(HEATING_REGISTERS)  # started from the panel
             await client.async_get_stove_state()
-            await client.async_set_temperature(20)
-            return server, first, while_off, writes_while_off
+            writes_after_panel_start = list(_writes(server))
+            await client.async_set_temperature(20)  # heating: sent at once
+            return server, first, while_off, writes_after_panel_start
 
-    server, first, while_off, writes_while_off = run(scenario())
+    server, first, while_off, writes_after_panel_start = run(scenario())
     assert first.set_temperature == 25  # seeded from the default option
     assert while_off.set_temperature == 19
-    assert writes_while_off == []
-    assert _writes(server) == ["RF2130", "RF2140"]
+    assert writes_after_panel_start == []
+    assert _writes(server) == ["RF2140"]
 
 
 def test_turn_off_sends_off_and_drops_the_queued_setpoint(relay) -> None:
@@ -784,7 +791,7 @@ def test_power_is_locked_after_turn_off_until_the_stove_leaves_heating(relay) ->
             await client.async_get_stove_state()  # still 513: latch kept
             with pytest.raises(relay.DuepiStoveOffError):
                 await client.async_set_power(3)
-            server.registers.update(RD9000=0x0300, RD4000=0)  # shutting down
+            server.registers.update(RD9000=0x0801, RD4000=0)  # shutting down
             await client.async_get_stove_state()
             server.registers.update(HEATING_REGISTERS)  # restarted later
             await client.async_set_power(3)
@@ -872,7 +879,7 @@ def test_failed_queued_setpoint_does_not_break_the_poll(relay) -> None:
     async def scenario():
         async with FakeRelay(relay) as server:
             client = _client(relay, server)
-            await client.async_set_temperature(22)  # stove off: queued
+            await client.async_turn_on(power=2, temperature=22, ignite=True)  # queued
             server.registers.update(HEATING_REGISTERS)
             server.corrupt_commands = {"RF2160"}
             failing_poll = await client.async_get_stove_state()
@@ -883,7 +890,7 @@ def test_failed_queued_setpoint_does_not_break_the_poll(relay) -> None:
 
     server, failing_poll, again = run(scenario())
     assert failing_poll.phase == 0x0201
-    assert _writes(server) == ["RF2160", "RF2160"]
+    assert _writes(server) == ["RF0020", "RF2160", "RF2160"]
     assert again.set_temperature == 22
 
 
@@ -985,7 +992,7 @@ def test_queued_setpoint_is_skipped_when_the_poll_is_short_of_time(
     async def scenario():
         async with FakeRelay(relay) as server:
             client = _client(relay, server)
-            await client.async_set_temperature(22)  # stove off: queued
+            await client.async_turn_on(power=2, temperature=22, ignite=True)  # queued
             server.registers.update(HEATING_REGISTERS)
             server.reply_delay = 0.1  # 6 reads ~0.6 s of the 1 s budget
             state = await client.async_get_stove_state()
@@ -993,7 +1000,7 @@ def test_queued_setpoint_is_skipped_when_the_poll_is_short_of_time(
 
     server, state = run(scenario())
     assert state.phase == 0x0201
-    assert _writes(server) == []
+    assert _writes(server) == ["RF0020"]
 
 
 def test_shutdown_phase_reads_as_off(relay) -> None:
@@ -1092,3 +1099,118 @@ def test_unexpected_validation_error_shows_unknown(
     flow = duepi_test_modules.config_flow.DuepiConfigFlow()
     result = run(flow.async_step_relay(_relay_input(1)))
     assert result["errors"] == {"base": "unknown"}
+
+
+
+# --- Ship review fixes (2026-11-06): reload guard, fresh checks, bounded wait --
+
+
+def test_fresh_client_refuses_power_and_ignition_during_startup_guard(
+    relay, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """protects=a reload right after a turn-off or a start cannot bypass the lost
+    latch and cooldown (Codex C1); fails_when=a new client writes at once;
+    no_claim=persistence across restarts (none: the guard is time-based)."""
+    monkeypatch.setattr(relay, "STARTUP_GUARD", 0.3)
+
+    async def scenario():
+        async with FakeRelay(relay) as server:
+            server.registers.update(HEATING_REGISTERS)
+            client = _client(relay, server)
+            with pytest.raises(relay.DuepiStoveOffError):
+                await client.async_set_power(3)
+            server.registers.update(OFF_REGISTERS)
+            with pytest.raises(relay.DuepiStartRefusedError):
+                await client.async_turn_on(power=2, temperature=21, ignite=True)
+            await asyncio.sleep(0.35)
+            server.registers.update(HEATING_REGISTERS)
+            await client.async_set_power(3)
+            return server
+
+    assert _writes(run(scenario())) == ["RF0030"]
+
+
+def test_queued_setpoint_rechecks_the_phase_right_before_writing(relay) -> None:
+    """protects=a queued setpoint never reaches a stove that stopped during the
+    poll's other reads (Codex C3); fails_when=the write relies on the phase read
+    at the start of the poll; no_claim=sub-second races inside one exchange."""
+
+    async def scenario():
+        async with FakeRelay(relay) as server:
+            client = _client(relay, server)
+            await client.async_turn_on(power=2, temperature=22, ignite=True)
+            server.registers.update(HEATING_REGISTERS)
+
+            def stop_after_last_poll_read(command: str) -> None:
+                if command == "RDA000":
+                    server.registers.update(OFF_REGISTERS)
+
+            server.on_command = stop_after_last_poll_read
+            await client.async_get_stove_state()
+            return server
+
+    assert _writes(run(scenario())) == ["RF0020"]
+
+
+def test_turn_off_latch_survives_a_cleaning_phase(relay) -> None:
+    """protects=a cleaning cycle right after turn-off does not unlock power
+    (ship specialist); fails_when=the latch is released on any non-heating
+    phase; no_claim=real cleaning timing."""
+
+    async def scenario():
+        async with FakeRelay(relay) as server:
+            server.registers.update(HEATING_REGISTERS)
+            client = _client(relay, server)
+            await client.async_turn_off()
+            server.registers.update(RD9000=0x0401)  # brazier cleaning
+            await client.async_get_stove_state()
+            server.registers.update(HEATING_REGISTERS)
+            with pytest.raises(relay.DuepiStoveOffError):
+                await client.async_set_power(3)
+            return server
+
+    assert _writes(run(scenario())) == ["RF0000"]
+
+
+def test_waiting_for_the_relay_is_bounded(relay, monkeypatch: pytest.MonkeyPatch) -> None:
+    """protects=commands do not pile up without limit behind a slow operation, so
+    a turn-off is not delayed for minutes (Codex C2); fails_when=the lock is
+    awaited without a deadline; no_claim=real relay latency."""
+    monkeypatch.setattr(relay, "LOCK_WAIT", 0.2)
+
+    async def scenario():
+        async with FakeRelay(relay) as server:
+            server.reply_delay = 0.15  # one poll holds the lock ~0.9 s
+            client = _client(relay, server)
+            poll = asyncio.create_task(client.async_get_stove_state())
+            await asyncio.sleep(0.05)
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            with pytest.raises(relay.DuepiTransportError):
+                await client.async_read_register("RD9000")
+            waited = loop.time() - started
+            await poll
+            return waited
+
+    assert run(scenario()) < 0.6
+
+
+def test_relay_device_page_does_not_link_to_the_cloud(
+    duepi_test_modules: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """protects=relay users are not sent to dpremoteiot.com from the device page
+    (ship red team); fails_when=configuration_url is set for relay devices;
+    no_claim=how the HA frontend renders the link."""
+    import importlib
+    import sys
+    from types import ModuleType
+
+    if "homeassistant.helpers.device_registry" not in sys.modules:
+        registry = ModuleType("homeassistant.helpers.device_registry")
+        registry.DeviceInfo = dict
+        monkeypatch.setitem(sys.modules, "homeassistant.helpers.device_registry", registry)
+    device = importlib.import_module("custom_components.duepi.device")
+    relay_info = device.build_device_info(duepi_test_modules.relay.relay_device_id(CODE))
+    cloud_info = device.build_device_info("0123456789abcdef01234567")
+    assert "configuration_url" not in relay_info
+    assert cloud_info["configuration_url"] == "https://dpremoteiot.com/dashboard"

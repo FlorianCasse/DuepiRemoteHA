@@ -11,6 +11,8 @@ CONF_DEVICE_CODE = "device_code"
 # Transports; entries created before the relay existed have no CONF_TRANSPORT.
 TRANSPORT_CLOUD = "cloud"
 TRANSPORT_RELAY = "relay"
+# Relay device ids are this prefix + a hash of the device code.
+RELAY_DEVICE_PREFIX = "relay_"
 DEFAULT_RELAY_PORT = 3000
 
 # Options keys
