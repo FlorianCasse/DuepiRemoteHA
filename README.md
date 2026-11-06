@@ -122,8 +122,8 @@ All entities are grouped under a single **Duepi Pellet Stove** device:
 | Set temperature | Sensor | Current target temperature (°C) |
 | Online | Binary sensor | Whether the stove is reachable through its transport (dpremoteiot.com or the Duepi relay) |
 | Problem | Binary sensor | Active when an alarm field or alarm/error status is reported |
-| Alarm | Sensor | Cloud alarm text/code, disabled by default because fields vary by stove |
-| Last seen | Sensor | Last UTC time the cloud explicitly reported the stove online |
+| Alarm | Sensor | Cloud alarm text/code, or `E<code>` from the relay error code; disabled by default because fields vary by stove |
+| Last seen | Sensor | Last UTC time the cloud explicitly reported the stove online, or the relay last read it |
 | Operating hours | Sensor | Restored cumulative time while the stove is on |
 | Pellet consumption (estimated) | Sensor | Restored consumption estimate based on runtime and power, disabled by default |
 | Power level | Number | Slider to adjust power level (1-5) |
