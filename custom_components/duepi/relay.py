@@ -395,6 +395,9 @@ class DuepiRelayClient:
             if info is not None and not info.power_on:
                 # Off or shutting down: the turn-off has taken effect.
                 self._off_latched_at = None
+                if self._setpoint_pending and not self._setpoint_needs_start:
+                    # Stopped outside HA: hold the setpoint for the next HA start.
+                    self._queue_setpoint(self._setpoint)
             time_left = self._deadline - asyncio.get_running_loop().time()
             if (
                 self._queued_setpoint_due()
@@ -528,7 +531,11 @@ class DuepiRelayClient:
                 # startup guard) gets the setpoint at the next heating poll; a
                 # stopped, igniting or shutting-down one waits for an HA start.
                 self._queue_setpoint(
-                    temperature, needs_start=not self._heating_stage(phase)
+                    temperature,
+                    needs_start=not (
+                        self._heating_stage(phase)
+                        or self._igniting_after_ha_start(phase)
+                    ),
                 )
 
         await self._run(_set_temperature)
@@ -546,6 +553,14 @@ class DuepiRelayClient:
             self._off_latched_at is None
             and phase != PHASE_OFF
             and phase >> 8 not in (STAGE_IGNITION, STAGE_SHUTDOWN)
+        )
+
+    def _igniting_after_ha_start(self, phase: int) -> bool:
+        """True while igniting after a recent start from Home Assistant."""
+        return (
+            phase >> 8 == STAGE_IGNITION
+            and self._last_ignition is not None
+            and time.monotonic() - self._last_ignition < QUEUED_SETPOINT_WINDOW
         )
 
     def _queue_setpoint(

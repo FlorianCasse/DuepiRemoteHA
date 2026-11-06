@@ -724,6 +724,45 @@ def test_panel_restart_after_an_old_ha_start_keeps_the_panel_setpoint(relay) -> 
     assert _writes(run(scenario())) == ["RF0020", "RF2150"]
 
 
+def test_setpoint_changed_during_an_ha_ignition_is_sent_once_heating(relay) -> None:
+    """protects=a target changed while an HA-started stove ignites still reaches it
+    (ship fix-check); fails_when=it waits for another HA start; no_claim=none."""
+
+    async def scenario():
+        async with FakeRelay(relay) as server:
+            client = _client(relay, server)
+            await client.async_turn_on(power=2, temperature=21, ignite=True)
+            server.registers.update(RD9000=0x0101)
+            await client.async_set_temperature(23)
+            server.registers.update(HEATING_REGISTERS)
+            await client.async_get_stove_state()
+            return server
+
+    assert _writes(run(scenario())) == ["RF0020", "RF2170"]
+
+
+def test_setpoint_held_during_cleaning_is_dropped_by_a_panel_stop(relay) -> None:
+    """protects=a stove stopped and restarted from its panel keeps its own target
+    (ship fix-check); fails_when=a setpoint queued while cleaning is sent after a
+    panel restart; no_claim=none beyond protects."""
+
+    async def scenario():
+        async with FakeRelay(relay) as server:
+            server.registers.update(HEATING_REGISTERS)
+            client = _client(relay, server)
+            server.registers.update(RD9000=0x0401)
+            await client.async_set_temperature(22)
+            server.registers.update(OFF_REGISTERS)  # stopped from the panel
+            stopped = await client.async_get_stove_state()
+            server.registers.update(HEATING_REGISTERS)  # restarted from the panel
+            await client.async_get_stove_state()
+            return server, stopped
+
+    server, stopped = run(scenario())
+    assert _writes(server) == []
+    assert stopped.set_temperature == 22
+
+
 def test_turn_off_sends_off_and_drops_the_queued_setpoint(relay) -> None:
     async def scenario():
         async with FakeRelay(relay) as server:
