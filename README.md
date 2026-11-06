@@ -291,9 +291,10 @@ The old script files are preserved in the `legacy/` folder of this repository fo
 On the Duepi module, a power command sent to a stopped stove starts the ignition. The relay transport therefore:
 
 - starts the stove only from an explicit **turn on** (climate on / HVAC mode heat), and only when the stove reads as off, with no error code and no running power; a second start is refused for one minute, even if the first one's answer was lost ("The stove cannot be started now…"); presets and power changes never ignite it;
-- after a turn off from Home Assistant, refuses power changes until the stove is seen leaving stable heating (10 minutes at most), so a late command cannot cancel the shutdown;
+- after a turn off from Home Assistant, refuses power changes until the stove is seen off or shutting down (10 minutes at most), so a late command cannot cancel the shutdown;
+- for one minute after the integration is loaded or reloaded, refuses starts and power changes (the safety state above is kept in memory only);
 - before changing the power, reads the phase and the real power in the same connection and refuses the command unless the stove is in stable heating ("The stove is not heating…"); a target temperature set while the stove is not in stable heating is held back and sent once it is;
-- never sends the target temperature to a stopped stove: on turn on it sends only the power command, then sends the target once the stove reaches stable heating. The stove does not acknowledge a target temperature in a verifiable way, so Home Assistant cannot confirm it was applied;
+- never sends the target temperature to a stopped stove: on turn on it sends only the power command, then sends the target once the stove reaches stable heating. A target set while the stove is off is only sent after a start from Home Assistant; a stove started from its panel or MyDPRemote keeps its own target. The stove does not acknowledge a target temperature in a verifiable way, so Home Assistant cannot confirm it was applied;
 - only sends a fixed list of commands (power 1-5, off, target temperature).
 
 One risk remains: if someone stops the stove from its panel or from MyDPRemote in the fraction of a second between that check and the command, the command can restart it. Home Assistant cannot rule this out; avoid changing the power from two places at the same moment.
