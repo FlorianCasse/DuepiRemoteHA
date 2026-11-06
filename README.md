@@ -4,10 +4,11 @@
   <img src="custom_components/duepi/brand/icon.png" alt="Duepi pellet stove icon" width="160">
 </p>
 
-Control a Duepi pellet stove from Home Assistant via the [dpremoteiot.com](https://dpremoteiot.com) cloud API.
+Control a Duepi pellet stove from Home Assistant, either through the [dpremoteiot.com](https://dpremoteiot.com) cloud API or through the Duepi relay server used by the MyDPRemote app.
 
 ## Features
 
+- **Two transports** — dpremoteiot.com account, or the Duepi relay (no account needed, reads the stove's real running power, fumes temperature, phase and error code)
 - **Native Climate entity** — full HVAC control with temperature and power level, using the stove's built-in temperature sensor
 - **Auto-login** — authenticates with email/password, auto-renews the session when it expires (no more manual cookie extraction!)
 - **Automatic stove discovery** — sign in and select a stove without hunting for its device ID
@@ -20,9 +21,10 @@ Control a Duepi pellet stove from Home Assistant via the [dpremoteiot.com](https
 
 ## Prerequisites
 
-- A Duepi Remote Wifi module connected to your stove and registered on dpremoteiot.com.
+- A Duepi Remote Wifi module connected to your stove.
   Examples: [poelediscount.com](https://www.poelediscount.com/modules-wifi-et-thermostats-connectes/3320-module-wifi-duepi-interstoves.html), [lafrancaisedupoele.fr](https://www.lafrancaisedupoele.fr/accueil/481-module-wi-fi-duepi.html)
-- An account on [dpremoteiot.com](https://dpremoteiot.com) with your stove added.
+- For the **cloud** transport: an account on [dpremoteiot.com](https://dpremoteiot.com) with your stove added.
+- For the **Duepi relay** transport: the module's device code (printed on the module label) and the relay server and port shown in the MyDPRemote app settings (for example `duepiwebserver4.com`, port `3000`; each module may use a different server).
 - Home Assistant 2024.6.0 or later.
 
 ## Installation
@@ -71,9 +73,20 @@ Once the integration is installed and HA has restarted:
 1. Go to **Settings → Devices & Services**.
 2. Click **+ Add Integration** (bottom-right).
 3. Search for **Duepi Pellet Stove** and select it.
-4. Enter your dpremoteiot.com email and password.
-5. Select the stove discovered on your account. Selection is shown even when the account contains only one stove.
-6. Click **Submit**. A new **Duepi Pellet Stove** device appears with all its entities.
+4. Choose how Home Assistant reaches the stove: **dpremoteiot.com account** or **Duepi relay**.
+
+**dpremoteiot.com account**
+
+1. Enter your dpremoteiot.com email and password.
+2. Select the stove discovered on your account. Selection is shown even when the account contains only one stove.
+3. Click **Submit**. A new **Duepi Pellet Stove** device appears with all its entities.
+
+**Duepi relay**
+
+1. Enter the relay server and port from the MyDPRemote app settings, and the device code from the module label.
+2. Click **Submit**. Home Assistant reads the stove once to check the code, then creates the device.
+
+The device code stays in the Home Assistant configuration; it is never logged and is redacted from diagnostics. "The stove did not answer with this device code" means the code is wrong; "Cannot reach the Duepi relay" means the server or port is wrong.
 
 If the dashboard format prevents automatic discovery, the flow falls back to a manual **Device ID** field. Existing installations keep their current device ID and do not need to be reconfigured.
 
@@ -107,13 +120,22 @@ All entities are grouped under a single **Duepi Pellet Stove** device:
 | Power level | Sensor | Current working power level (1-5) |
 | Status | Sensor | Status text (Heating, Idle, Standby, Off...) |
 | Set temperature | Sensor | Current target temperature (°C) |
-| Online | Binary sensor | Whether the stove is reachable via dpremoteiot.com |
+| Online | Binary sensor | Whether the stove is reachable through its transport (dpremoteiot.com or the Duepi relay) |
 | Problem | Binary sensor | Active when an alarm field or alarm/error status is reported |
 | Alarm | Sensor | Cloud alarm text/code, disabled by default because fields vary by stove |
 | Last seen | Sensor | Last UTC time the cloud explicitly reported the stove online |
 | Operating hours | Sensor | Restored cumulative time while the stove is on |
 | Pellet consumption (estimated) | Sensor | Restored consumption estimate based on runtime and power, disabled by default |
 | Power level | Number | Slider to adjust power level (1-5) |
+| Real power | Sensor | *Relay only.* Power level the stove actually runs at, as shown on the stove display (0 when off); it modulates below the setting |
+| Power setting | Sensor | *Relay only.* Power level set on the stove (panel, MyDPRemote or Home Assistant) |
+| Fumes temperature | Sensor | *Relay only.* Flue gas temperature (°C) |
+| Phase code | Sensor | *Relay only, diagnostic.* Raw operating phase reported by the stove |
+| Error code | Sensor | *Relay only, diagnostic.* Raw stove error code (0 = none) |
+
+With the relay transport, the **Power level** slider, sensor and presets follow the stove's own power setting, including changes made on the panel; **Real power** shows the level it runs at. Right after each brazier cleaning (about every 30 minutes) the stove restarts at power 1 for a few seconds before returning to its setting.
+
+The stove does not report its target temperature to the relay, so the thermostat shows the last target set from Home Assistant (initially the **Comfort/default temperature** option). A target changed on the stove panel is not visible in Home Assistant.
 
 The cloud can briefly report a healthy stove offline during its periodic heartbeat.
 The integration waits 120 seconds before publishing a disconnect, while restoring
@@ -264,6 +286,20 @@ If you prefer to migrate manually without the script:
 
 The old script files are preserved in the `legacy/` folder of this repository for reference.
 
+## Safety (Duepi relay)
+
+On the Duepi module, a power command sent to a stopped stove starts the ignition. The relay transport therefore:
+
+- starts the stove only from an explicit **turn on** (climate on / HVAC mode heat), and only when the stove reads as off, with no error code and no running power; a second start is refused for one minute, even if the first one's answer was lost ("The stove cannot be started now…"); presets and power changes never ignite it;
+- after a turn off from Home Assistant, refuses power changes until the stove is seen leaving stable heating (10 minutes at most), so a late command cannot cancel the shutdown;
+- before changing the power, reads the phase and the real power in the same connection and refuses the command unless the stove is in stable heating ("The stove is not heating…"); a target temperature set while the stove is not in stable heating is held back and sent once it is;
+- never sends the target temperature to a stopped stove: on turn on it sends only the power command, then sends the target once the stove reaches stable heating. The stove does not acknowledge a target temperature in a verifiable way, so Home Assistant cannot confirm it was applied;
+- only sends a fixed list of commands (power 1-5, off, target temperature).
+
+One risk remains: if someone stops the stove from its panel or from MyDPRemote in the fraction of a second between that check and the command, the command can restart it. Home Assistant cannot rule this out; avoid changing the power from two places at the same moment.
+
+The Duepi protocol sends the device code unencrypted to the relay at each connection, and the encryption key is derived from that code. Anyone who sees the code (on the module label, on the network path, or the relay operator) can control the stove, including starting it, and the safety checks above trust what the relay reports. Treat the device code like a password.
+
 ## Troubleshooting
 
 To enable debug logs, add the following to your `configuration.yaml`:
@@ -284,7 +320,9 @@ Restart Home Assistant and view the logs:
 
 ## Known Limitations
 
-- **Power level may be ignored on startup** — some stove models always start at a fixed power level regardless of the `settedPower` value. When the stove is turned on from Home Assistant, the integration re-sends the desired power once, when the stove first reports nominal heating, so the configured level applies after ignition. Stoves started from their panel or the vendor app are left alone.
-- **Cloud dependency** — requires internet connectivity (communicates via dpremoteiot.com, not locally).
+- **Power level may be ignored on startup** — some stove models always start at a fixed power level regardless of the `settedPower` value. When the stove is turned on from Home Assistant, the integration re-sends the desired power once, when the stove first reports nominal heating, so the configured level applies after ignition. Stoves started from their panel or the vendor app are left alone. This only applies to the cloud transport: the relay reads the real power, so it does not need the re-send.
+- **Cloud dependency** — both transports require internet connectivity: dpremoteiot.com for the cloud transport, the Duepi relay server for the relay transport. Neither talks to the stove over the local network.
+- **Relay phases** — phase codes were mapped on one stove: off, ignition, stable heating and brazier cleaning. Shutdown and any other code show as "Phase N" and are treated as not heating, so power and target changes are refused while they are shown. Please report the phase codes your stove goes through, especially on Hydro models.
+- **Relay and MyDPRemote** — Home Assistant opens a short connection to the relay at each poll (about 1 s every 30 s). Whether MyDPRemote keeps working at the same time has not been confirmed yet; please report it.
 - **HTML scraping fallback** — state detection primarily uses JSON data embedded in the dashboard HTML, with regex parsing as a fallback. If dpremoteiot.com changes their layout, the integration may need updating.
 - **Estimated pellet use** — consumption is calculated from configured rates and observed power, not measured by the stove. Gaps are capped to avoid counting through long outages or restarts.
