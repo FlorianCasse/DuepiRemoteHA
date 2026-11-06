@@ -68,7 +68,7 @@ def test_user_discovers_devices_then_creates_selected_entry(
     )
 
     first = asyncio.run(
-        flow.async_step_user({"email": "person@example.test", "password": "secret"})
+        flow.async_step_cloud({"email": "person@example.test", "password": "secret"})
     )
     result = asyncio.run(flow.async_step_select_device({"device_id": "stove-one"}))
 
@@ -100,7 +100,7 @@ def test_empty_discovery_uses_manual_device_fallback(
     )
 
     first = asyncio.run(
-        flow.async_step_user({"email": "person@example.test", "password": "secret"})
+        flow.async_step_cloud({"email": "person@example.test", "password": "secret"})
     )
     result = asyncio.run(flow.async_step_manual_device({"device_id": "manual-id"}))
 
@@ -123,7 +123,7 @@ def test_single_device_still_uses_explicit_selection(
     )
 
     result = asyncio.run(
-        flow.async_step_user({"email": "person@example.test", "password": "secret"})
+        flow.async_step_cloud({"email": "person@example.test", "password": "secret"})
     )
 
     assert result["step_id"] == "select_device"
@@ -142,10 +142,10 @@ def test_discovery_transport_error_remains_on_credentials_step(
     )
 
     result = asyncio.run(
-        flow.async_step_user({"email": "person@example.test", "password": "secret"})
+        flow.async_step_cloud({"email": "person@example.test", "password": "secret"})
     )
 
-    assert result["step_id"] == "user"
+    assert result["step_id"] == "cloud"
     assert result["errors"] == {"base": "cannot_connect"}
 
 
@@ -162,7 +162,7 @@ def test_manual_device_maps_parse_failure(
     )
 
     asyncio.run(
-        flow.async_step_user({"email": "person@example.test", "password": "secret"})
+        flow.async_step_cloud({"email": "person@example.test", "password": "secret"})
     )
     result = asyncio.run(flow.async_step_manual_device({"device_id": "missing"}))
 

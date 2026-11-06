@@ -13,15 +13,23 @@ import pytest
 class CommandClient:
     """Record the turn-on command sent by the coordinator."""
 
+    # DuepiClient protocol attributes of the cloud transport.
+    transport_name = "dpremoteiot.com"
+    reports_real_power = False
+
     def __init__(self) -> None:
         self.turn_on_calls: list[tuple[int, int]] = []
 
-    async def async_turn_on(self, *, power: int, temperature: int) -> None:
+    async def async_turn_on(self, *, power: int, temperature: int, ignite: bool = False) -> None:
         self.turn_on_calls.append((power, temperature))
 
 
 class PollingClient:
     """Return a single state from a successful coordinator poll."""
+
+    # DuepiClient protocol attributes of the cloud transport.
+    transport_name = "dpremoteiot.com"
+    reports_real_power = False
 
     def __init__(self, state: object) -> None:
         self._state = state

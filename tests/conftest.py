@@ -33,6 +33,9 @@ class _ConfigFlow:
     def async_show_form(self, **kwargs: object) -> dict[str, object]:
         return {"type": "form", **kwargs}
 
+    def async_show_menu(self, **kwargs: object) -> dict[str, object]:
+        return {"type": "menu", **kwargs}
+
     def async_create_entry(self, **kwargs: object) -> dict[str, object]:
         return {"type": "create_entry", **kwargs}
 
@@ -126,9 +129,19 @@ def _install_homeassistant_stubs(monkeypatch: pytest.MonkeyPatch, scheduler: _Sc
     exceptions = ModuleType("homeassistant.exceptions")
     exceptions.ConfigEntryAuthFailed = _ConfigEntryAuthFailed
     exceptions.ConfigEntryNotReady = type("ConfigEntryNotReady", (Exception,), {})
+
+    class HomeAssistantError(Exception):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__(*args)
+            self.translation_domain = kwargs.get("translation_domain")
+            self.translation_key = kwargs.get("translation_key")
+
+    exceptions.HomeAssistantError = HomeAssistantError
     const = ModuleType("homeassistant.const")
     const.CONF_EMAIL = "email"
     const.CONF_PASSWORD = "password"
+    const.CONF_HOST = "host"
+    const.CONF_PORT = "port"
     data_entry_flow = ModuleType("homeassistant.data_entry_flow")
     data_entry_flow.FlowResult = dict
     helpers = ModuleType("homeassistant.helpers")
@@ -137,6 +150,10 @@ def _install_homeassistant_stubs(monkeypatch: pytest.MonkeyPatch, scheduler: _Sc
     update_coordinator = ModuleType("homeassistant.helpers.update_coordinator")
     update_coordinator.DataUpdateCoordinator = _DataUpdateCoordinator
     update_coordinator.UpdateFailed = _UpdateFailed
+    selector = ModuleType("homeassistant.helpers.selector")
+    selector.TextSelectorType = SimpleNamespace(PASSWORD="password")
+    selector.TextSelectorConfig = lambda **kwargs: kwargs
+    selector.TextSelector = lambda config=None: str
     aiohttp_client = ModuleType("homeassistant.helpers.aiohttp_client")
     aiohttp_client.async_create_clientsession = lambda _hass, **_kwargs: object()
     components = ModuleType("homeassistant.components")
@@ -167,6 +184,7 @@ def _install_homeassistant_stubs(monkeypatch: pytest.MonkeyPatch, scheduler: _Sc
         "homeassistant.helpers": helpers,
         "homeassistant.helpers.event": event,
         "homeassistant.helpers.aiohttp_client": aiohttp_client,
+        "homeassistant.helpers.selector": selector,
         "homeassistant.helpers.update_coordinator": update_coordinator,
         "homeassistant.components": components,
         "homeassistant.components.diagnostics": diagnostics,
@@ -232,11 +250,13 @@ def duepi_test_modules(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         api = importlib.import_module(f"{package_name}.api")
         coordinator = importlib.import_module(f"{package_name}.coordinator")
         config_flow = importlib.import_module(f"{package_name}.config_flow")
+        relay = importlib.import_module(f"{package_name}.relay")
         monkeypatch.setattr(coordinator, "async_call_later", scheduler.async_call_later)
         yield SimpleNamespace(
             api=api,
             coordinator=coordinator,
             config_flow=config_flow,
+            relay=relay,
             scheduler=scheduler,
         )
     finally:

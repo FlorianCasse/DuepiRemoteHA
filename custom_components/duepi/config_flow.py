@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import aiohttp
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
-from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
+from homeassistant.const import CONF_EMAIL, CONF_HOST, CONF_PASSWORD, CONF_PORT
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.selector import (
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
 from .api import (
     DuepiAuthError,
@@ -20,6 +26,7 @@ from .api import (
     DuepiConnectionError,
     DuepiDeviceSummary,
     DuepiParseError,
+    DuepiProtocolError,
     DuepiRateLimitError,
     DuepiServerError,
     DuepiTransportError,
@@ -27,17 +34,20 @@ from .api import (
 from .const import (
     CONF_DEFAULT_POWER,
     CONF_DEFAULT_TEMPERATURE,
+    CONF_DEVICE_CODE,
     CONF_DEVICE_ID,
     CONF_ECO_POWER,
     CONF_ECO_TEMPERATURE,
     CONF_PELLET_KG_PER_HOUR_MAX,
     CONF_PELLET_KG_PER_HOUR_MIN,
     CONF_SCAN_INTERVAL,
+    CONF_TRANSPORT,
     DEFAULT_ECO_POWER,
     DEFAULT_ECO_TEMPERATURE,
     DEFAULT_PELLET_KG_PER_HOUR_MAX,
     DEFAULT_PELLET_KG_PER_HOUR_MIN,
     DEFAULT_POWER,
+    DEFAULT_RELAY_PORT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TEMPERATURE,
     DOMAIN,
@@ -45,7 +55,10 @@ from .const import (
     MAX_TEMPERATURE,
     MIN_POWER,
     MIN_TEMPERATURE,
+    TRANSPORT_CLOUD,
+    TRANSPORT_RELAY,
 )
+from .relay import REG_PHASE, DuepiRelayClient, relay_device_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,6 +66,22 @@ USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_EMAIL): str,
         vol.Required(CONF_PASSWORD): str,
+    }
+)
+
+# Label codes are short alphanumeric strings; anything else (empty, "#", ":",
+# spaces) would corrupt the relay login line.
+_DEVICE_CODE = re.compile(r"[A-Za-z0-9]{4,32}")
+
+RELAY_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_HOST): str,
+        vol.Required(CONF_PORT, default=DEFAULT_RELAY_PORT): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=65535)
+        ),
+        vol.Required(CONF_DEVICE_CODE): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.PASSWORD)
+        ),
     }
 )
 
@@ -78,7 +107,68 @@ class DuepiConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle the initial configuration step."""
+        """Let the user choose how Home Assistant reaches the stove."""
+        return self.async_show_menu(
+            step_id="user", menu_options=[TRANSPORT_CLOUD, TRANSPORT_RELAY]
+        )
+
+    async def async_step_relay(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Configure a stove reached through the Duepi relay (MyDPRemote server)."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            host = user_input[CONF_HOST].strip()
+            port = int(user_input[CONF_PORT])
+            device_code = user_input[CONF_DEVICE_CODE].strip()
+            if not _DEVICE_CODE.fullmatch(device_code):
+                return self.async_show_form(
+                    step_id="relay",
+                    data_schema=RELAY_SCHEMA,
+                    errors={CONF_DEVICE_CODE: "invalid_device_code"},
+                )
+            device_id = relay_device_id(device_code)
+            await self.async_set_unique_id(device_id)
+            self._abort_if_unique_id_configured()
+            error = await self._async_validate_relay(host, port, device_code)
+            if error is None:
+                return self.async_create_entry(
+                    title=f"Duepi Stove ({host})",
+                    data={
+                        CONF_TRANSPORT: TRANSPORT_RELAY,
+                        CONF_HOST: host,
+                        CONF_PORT: port,
+                        CONF_DEVICE_CODE: device_code,
+                        CONF_DEVICE_ID: device_id,
+                    },
+                )
+            errors["base"] = error
+
+        return self.async_show_form(
+            step_id="relay", data_schema=RELAY_SCHEMA, errors=errors
+        )
+
+    async def _async_validate_relay(
+        self, host: str, port: int, device_code: str
+    ) -> str | None:
+        """Read one register; map failures to relay error keys."""
+        client = DuepiRelayClient(host, port, device_code)
+        try:
+            await client.async_read_register(REG_PHASE)
+        except DuepiProtocolError:
+            # Replies that do not decrypt mean the module holds another code.
+            return "relay_invalid_code"
+        except DuepiConnectionError:
+            return "relay_cannot_connect"
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.exception("Unexpected error during relay validation", exc_info=err)
+            return "unknown"
+        return None
+
+    async def async_step_cloud(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle dpremoteiot.com account credentials."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -110,7 +200,7 @@ class DuepiConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = self._error_from_exception(err)
 
         return self.async_show_form(
-            step_id="user",
+            step_id=TRANSPORT_CLOUD,
             data_schema=USER_SCHEMA,
             errors=errors,
         )
@@ -120,7 +210,7 @@ class DuepiConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Select a discovered stove."""
         if self._client is None or not getattr(self, "_devices", None):
-            return await self.async_step_user()
+            return await self.async_step_cloud()
 
         errors: dict[str, str] = {}
         choices = {
@@ -163,7 +253,7 @@ class DuepiConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Enter a stove identifier when discovery is unavailable."""
         if self._client is None:
-            return await self.async_step_user()
+            return await self.async_step_cloud()
 
         errors: dict[str, str] = {}
         if user_input is not None:

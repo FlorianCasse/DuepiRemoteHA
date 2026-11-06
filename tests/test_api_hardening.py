@@ -555,6 +555,10 @@ def test_coordinator_reports_transport_server_and_rate_limit_separately(
     api = duepi_test_modules.api
 
     class FailingClient:
+        # DuepiClient protocol attributes of the cloud transport.
+        transport_name = "dpremoteiot.com"
+        reports_real_power = False
+
         async def async_get_stove_state(self) -> object:
             raise getattr(api, error_class)(
                 {

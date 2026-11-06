@@ -15,6 +15,10 @@ import pytest
 class FakeClient:
     """Return each supplied stove state in polling order."""
 
+    # DuepiClient protocol attributes of the cloud transport.
+    transport_name = "dpremoteiot.com"
+    reports_real_power = False
+
     def __init__(self, states: list[object]) -> None:
         self._states: Iterator[object] = iter(states)
 

@@ -9,6 +9,7 @@ import logging
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Protocol
 from urllib.parse import urlsplit
 
 import aiohttp
@@ -145,6 +146,21 @@ class DuepiTransportError(DuepiConnectionError):
     """A network or timeout failure eligible for one read retry."""
 
 
+class DuepiProtocolError(DuepiTransportError):
+    """A relay reply could not be decrypted or failed its checksum.
+
+    On the very first read this usually means a wrong device code.
+    """
+
+
+class DuepiStoveOffError(DuepiApiError):
+    """A command was refused because the stove is not in stable heating."""
+
+
+class DuepiStartRefusedError(DuepiApiError):
+    """Turning the stove on was refused (busy, in alarm, or a start was just sent)."""
+
+
 class DuepiServerError(DuepiConnectionError):
     """A transient server-side HTTP failure eligible for one read retry."""
 
@@ -171,6 +187,12 @@ class DuepiStoveState:
     alarm: str | None = None
     # False while the stove is in eco stand-by: in service, flame out.
     flame_on: bool | None = None
+    # Relay transport only; the cloud does not expose these values.
+    real_power: int | None = None
+    power_setting: int | None = None
+    phase: int | None = None
+    fumes_temperature: float | None = None
+    error_code: int | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -182,8 +204,53 @@ class DuepiDeviceSummary:
     name: str | None
 
 
+class DuepiClient(Protocol):
+    """Interface shared by every stove transport (cloud and relay)."""
+
+    # Shown in errors, e.g. "Cannot connect to <transport_name>".
+    transport_name: str
+    # True when the transport measures the power the stove really runs at.
+    reports_real_power: bool
+
+    @property
+    def device_id(self) -> str | None:
+        """Return the stable identifier of the stove."""
+
+    async def async_get_stove_state(self) -> DuepiStoveState:
+        """Read the current stove state."""
+
+    async def async_turn_on(
+        self,
+        power: int | None = None,
+        temperature: int | None = None,
+        *,
+        ignite: bool = False,
+    ) -> None:
+        """Apply power and setpoint; only ``ignite=True`` may start a stopped stove."""
+
+    async def async_turn_off(self) -> None:
+        """Turn the stove off."""
+
+    async def async_set_power(
+        self, power: int, current_state: DuepiStoveState | None = None
+    ) -> None:
+        """Set the working power without changing on/off state."""
+
+    async def async_set_temperature(
+        self, temperature: int, current_state: DuepiStoveState | None = None
+    ) -> None:
+        """Set the target temperature without changing on/off state."""
+
+    async def async_close(self) -> None:
+        """Release transport resources."""
+
+
 class DuepiCloudClient:
     """Async client for the dpremoteiot.com cloud API."""
+
+    transport_name = "dpremoteiot.com"
+    # The cloud echoes the last requested power (settedPower), not the real one.
+    reports_real_power = False
 
     def __init__(
         self,
@@ -329,8 +396,17 @@ class DuepiCloudClient:
 
         return devices
 
-    async def async_turn_on(self, power: int | None = None, temperature: int | None = None) -> None:
-        """Turn the stove on."""
+    async def async_turn_on(
+        self,
+        power: int | None = None,
+        temperature: int | None = None,
+        *,
+        ignite: bool = False,
+    ) -> None:
+        """Turn the stove on with the given power and setpoint.
+
+        The cloud has a single "active" command, so ``ignite`` is ignored here.
+        """
         await self._send_command(active=True, power=power, temperature=temperature)
 
     async def async_turn_off(self) -> None:

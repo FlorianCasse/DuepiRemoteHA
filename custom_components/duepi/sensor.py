@@ -32,8 +32,10 @@ from .const import (
     CONF_DEVICE_ID,
     CONF_PELLET_KG_PER_HOUR_MAX,
     CONF_PELLET_KG_PER_HOUR_MIN,
+    CONF_TRANSPORT,
     DEFAULT_PELLET_KG_PER_HOUR_MAX,
     DEFAULT_PELLET_KG_PER_HOUR_MIN,
+    TRANSPORT_RELAY,
 )
 from .coordinator import DuepiCoordinator
 from .device import build_device_info
@@ -96,6 +98,45 @@ SENSOR_DESCRIPTIONS: tuple[DuepiSensorDescription, ...] = (
     ),
 )
 
+# Values only the relay transport can read; the cloud does not expose them.
+RELAY_SENSOR_DESCRIPTIONS: tuple[DuepiSensorDescription, ...] = (
+    DuepiSensorDescription(
+        key="real_power",
+        translation_key="real_power",
+        icon="mdi:fire",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda coordinator: coordinator.data.real_power,
+    ),
+    DuepiSensorDescription(
+        key="power_setting",
+        translation_key="power_setting",
+        icon="mdi:tune-variant",
+        value_fn=lambda coordinator: coordinator.data.power_setting,
+    ),
+    DuepiSensorDescription(
+        key="fumes_temperature",
+        translation_key="fumes_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        value_fn=lambda coordinator: coordinator.data.fumes_temperature,
+    ),
+    DuepiSensorDescription(
+        key="phase",
+        translation_key="phase",
+        icon="mdi:state-machine",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda coordinator: coordinator.data.phase,
+    ),
+    DuepiSensorDescription(
+        key="error_code",
+        translation_key="error_code",
+        icon="mdi:alert-octagon-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda coordinator: coordinator.data.error_code,
+    ),
+)
+
 OPERATING_HOURS_DESCRIPTION = SensorEntityDescription(
     key="operating_hours",
     translation_key="operating_hours",
@@ -124,9 +165,11 @@ async def async_setup_entry(
     """Set up Duepi sensor entities."""
     coordinator: DuepiCoordinator = entry.runtime_data
     device_id = entry.data[CONF_DEVICE_ID]
+    descriptions = SENSOR_DESCRIPTIONS
+    if entry.data.get(CONF_TRANSPORT) == TRANSPORT_RELAY:
+        descriptions += RELAY_SENSOR_DESCRIPTIONS
     entities: list[SensorEntity] = [
-        DuepiSensorEntity(coordinator, device_id, desc)
-        for desc in SENSOR_DESCRIPTIONS
+        DuepiSensorEntity(coordinator, device_id, desc) for desc in descriptions
     ]
     entities.extend(
         [
@@ -178,6 +221,18 @@ class DuepiSensorEntity(CoordinatorEntity[DuepiCoordinator], SensorEntity):
         if self.coordinator.data is None:
             return None
         return self.entity_description.value_fn(self.coordinator)
+
+
+def burning_power(state: DuepiStoveState | None) -> int | None:
+    """Return the power level that drives pellet use.
+
+    The relay measures the real level; the cloud only reports the requested one.
+    """
+    if state is None:
+        return None
+    if state.real_power is not None:
+        return state.real_power
+    return state.working_power
 
 
 def _is_burning(state: DuepiStoveState | None) -> bool:
@@ -234,7 +289,7 @@ class DuepiAccumulatingSensor(
 
         state = self.coordinator.data
         self._previous_active = _is_burning(state)
-        self._previous_power = state.working_power if state else None
+        self._previous_power = burning_power(state)
         self._last_tick = monotonic()
 
     @property
@@ -248,7 +303,7 @@ class DuepiAccumulatingSensor(
         if self._kind != "pellets":
             return None
         state = self.coordinator.data
-        power = state.working_power if state else None
+        power = burning_power(state)
         return {
             "power_level": power,
             "estimated_rate_kg_per_hour": pellet_rate(
@@ -279,6 +334,6 @@ class DuepiAccumulatingSensor(
 
         state = self.coordinator.data
         self._previous_active = _is_burning(state)
-        self._previous_power = state.working_power if state else None
+        self._previous_power = burning_power(state)
         self._last_tick = now
         super()._handle_coordinator_update()

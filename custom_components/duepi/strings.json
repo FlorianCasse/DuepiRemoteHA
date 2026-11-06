@@ -3,11 +3,27 @@
   "config": {
     "step": {
       "user": {
+        "title": "How does Home Assistant reach your stove?",
+        "menu_options": {
+          "cloud": "dpremoteiot.com account",
+          "relay": "Duepi relay (MyDPRemote server, reads the real power)"
+        }
+      },
+      "cloud": {
         "title": "Connect to dpremoteiot.com",
         "description": "Enter your dpremoteiot.com account credentials. Your stoves will be discovered automatically.",
         "data": {
           "email": "Email",
           "password": "Password"
+        }
+      },
+      "relay": {
+        "title": "Connect through the Duepi relay",
+        "description": "Use the server and port shown in the MyDPRemote app settings, and the device code printed on the Wi-Fi module label. The code stays in Home Assistant and is never logged, but the Duepi protocol sends it unencrypted to the relay: treat it like a password.",
+        "data": {
+          "host": "Relay server",
+          "port": "Port",
+          "device_code": "Device code"
         }
       },
       "select_device": {
@@ -39,7 +55,10 @@
       "cannot_connect": "Cannot connect to dpremoteiot.com.",
       "server_error": "The dpremoteiot.com service is temporarily unavailable.",
       "rate_limited": "Too many requests to dpremoteiot.com. Please try again later.",
-      "unknown": "An unexpected error occurred."
+      "unknown": "An unexpected error occurred.",
+      "relay_cannot_connect": "Cannot reach the Duepi relay. Check the server and port shown in MyDPRemote.",
+      "relay_invalid_code": "The stove did not answer with this device code. Check the code on the Wi-Fi module label.",
+      "invalid_device_code": "The device code is 4 to 32 letters or digits, as printed on the Wi-Fi module label."
     },
     "abort": {
       "already_configured": "This device is already configured.",
@@ -90,6 +109,21 @@
       },
       "pellet_consumption": {
         "name": "Pellet consumption (estimated)"
+      },
+      "real_power": {
+        "name": "Real power"
+      },
+      "fumes_temperature": {
+        "name": "Fumes temperature"
+      },
+      "phase": {
+        "name": "Phase code"
+      },
+      "error_code": {
+        "name": "Error code"
+      },
+      "power_setting": {
+        "name": "Power setting"
       }
     },
     "binary_sensor": {
@@ -104,6 +138,14 @@
       "power_level": {
         "name": "Power level"
       }
+    }
+  },
+  "exceptions": {
+    "stove_off": {
+      "message": "The stove is not heating. Turn it on, or wait for it to reach stable heating, before changing the power."
+    },
+    "start_refused": {
+      "message": "The stove cannot be started now: it is busy (cleaning or shutting down), reports an error, a start was requested less than a minute ago, or the integration was loaded less than a minute ago."
     }
   }
 }
